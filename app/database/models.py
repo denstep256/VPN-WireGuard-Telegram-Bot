@@ -49,6 +49,7 @@ class Subscribers(Base):
     expiry_date: Mapped[str] = mapped_column(String(25))
     notif_oneday = mapped_column(Boolean, default=False)
     note: Mapped[str | None] = mapped_column(String, nullable=True, default="")
+    subscripti: Mapped[str] = mapped_column(String(25))
 
 class TestPeriod(Base):
     __tablename__ = 'test_period'
