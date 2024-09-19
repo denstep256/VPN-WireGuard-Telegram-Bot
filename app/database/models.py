@@ -27,9 +27,11 @@ class Payments(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tg_id = mapped_column(BigInteger)
-    amount: Mapped[int] = mapped_column()
+    username: Mapped[str] = mapped_column(String(25))
+    summa: Mapped[int] = mapped_column()
     time_to_add: Mapped[str] = mapped_column(String(25))
     payload: Mapped[str] = mapped_column(String(25))
+    provider_payment_charge_id: Mapped[str] = mapped_column(String(25))
 
 class Static(Base):
     __tablename__ = 'static'
@@ -48,6 +50,7 @@ class Subscribers(Base):
     subscription: Mapped[str] = mapped_column(String(25))
     expiry_date: Mapped[str] = mapped_column(String(25))
     notif_oneday = mapped_column(Boolean, default=False)
+    #note нужно для ручного добавления подписки
     note: Mapped[str | None] = mapped_column(String, nullable=True, default="")
 
 class TestPeriod(Base):

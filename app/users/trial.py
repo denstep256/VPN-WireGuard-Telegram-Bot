@@ -64,3 +64,4 @@ async def check_trial_period(tg_id):
         else:
             # Сообщение об успешной активации пробного периода
             return texts_for_bot.get("TRIAL_ACTIVATED"), True
+

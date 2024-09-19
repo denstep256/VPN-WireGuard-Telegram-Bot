@@ -25,6 +25,7 @@ async def help_main_button(message: Message):
     else:
         await message.answer('У вас нет доступа')
 
+#TODO: Добавить кнопку с числом клиентов на сервере
 
 @admin_router.message(F.text == 'Пользователи с подпиской')
 async def users_with_subscribe_admin(message: Message):

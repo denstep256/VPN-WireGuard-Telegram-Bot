@@ -38,7 +38,7 @@ async def help_main_button(message: Message):
     await message.answer(texts_for_bot["about_message"], parse_mode='HTML')
 
 @router.message(F.text == 'Проверить подписку')
-@router.message(F.text == 'Проверить подписку')
+#TODO: После кнопки проверить подписку, если подписка активна присылать файл конфигурации
 async def check_subscribe_button(message: Message):
     tg_id = message.from_user.id
 
