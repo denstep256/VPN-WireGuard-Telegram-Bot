@@ -19,7 +19,9 @@ trial_router = Router()
 async def trial_button(call: CallbackQuery):
     # Выполняем проверку пробного периода и доступности файлов
     response_message, is_trial_not_activated = await check_trial_period(call.from_user.id)
-    available_conf = await check_available_clients_count()
+
+    if is_trial_not_activated:
+        available_conf = await check_available_clients_count()
 
     # Отправляем сообщение в зависимости от результата проверки
     await call.message.answer(response_message, parse_mode='HTML')

@@ -1,7 +1,5 @@
-import json
+from aiogram.types import Message
 
-from aiogram.types import Message, FSInputFile
-from aiogram.filters import CommandStart
 from aiogram import Router, F
 from sqlalchemy import select, func
 

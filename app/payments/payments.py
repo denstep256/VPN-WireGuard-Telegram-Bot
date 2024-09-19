@@ -14,6 +14,7 @@ pay_router = Router()
 
 @pay_router.callback_query(F.data.startswith('one_month'))
 async def create_invoice(call: CallbackQuery):
+    await call.bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
     prices = [LabeledPrice(label='description', amount=199 * 100)]  # Сумма в копейках
     await call.bot.send_invoice(
         chat_id=call.from_user.id,
@@ -31,6 +32,7 @@ async def create_invoice(call: CallbackQuery):
 
 @pay_router.callback_query(F.data.startswith('six_month'))
 async def create_invoice(call: CallbackQuery):
+    await call.bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
     prices = [LabeledPrice(label='description', amount=999 * 10)]  # Сумма в копейках
     await call.bot.send_invoice(
         chat_id=call.from_user.id,
@@ -48,6 +50,7 @@ async def create_invoice(call: CallbackQuery):
 
 @pay_router.callback_query(F.data.startswith('twelve_month'))
 async def create_invoice(call: CallbackQuery):
+    await call.bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
     prices = [LabeledPrice(label='description', amount=1799 * 10)]  # Сумма в копейках
     await call.bot.send_invoice(
         chat_id=call.from_user.id,
@@ -97,7 +100,6 @@ async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: 
 async def handle_successful_payment(message: Message, bot: Bot):
     user_id = message.from_user.id
     payload = message.successful_payment.invoice_payload
-
     duration_map = {
         "subscription_monthly": SubscriptionDuration.MONTHLY,
         "subscription_semi_annual": SubscriptionDuration.SEMI_ANNUAL,
