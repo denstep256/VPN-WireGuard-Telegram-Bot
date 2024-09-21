@@ -2,11 +2,11 @@ from aiogram.types import (ReplyKeyboardMarkup, KeyboardButton,
                            InlineKeyboardMarkup, InlineKeyboardButton)
 
 
-main = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='Купить')],
-                                     [KeyboardButton(text='Проверить подписку')],
-                                     [KeyboardButton(text='Как подключить')],
-                                     [KeyboardButton(text='Помощь'),
-                                      KeyboardButton(text='О VPN')]],
+main = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='Купить 💳')],
+                                     [KeyboardButton(text='Проверить подписку ✅')],
+                                     [KeyboardButton(text='Как подключить ⚙️')],
+                                     [KeyboardButton(text='Помощь 🆘'),
+                                      KeyboardButton(text='О VPN ℹ️')]],
                            resize_keyboard=True)
 
 
@@ -22,18 +22,18 @@ buy_kb = InlineKeyboardMarkup(inline_keyboard=[
                           callback_data=f'six_month')],
     [InlineKeyboardButton(text='Подписка на 12 месяцев',
                           callback_data=f'twelve_month')],
-    [InlineKeyboardButton(text='Пробная подписка на 7 дней',
-                          callback_data=f'test_7_days')]])
+    [InlineKeyboardButton(text='Пробная подписка на 3 дня',
+                          callback_data=f'test_3_days')]])
 
 confirm_order_kb = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text='Написать',
                           url="https://t.me/ZenithVPN_support",
                           callback_data='confirm_order_kb')]])
 
-how_to_connect_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='iPhone')],
-                                                  [KeyboardButton(text='Android')],
+how_to_connect_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='iPhone 📱')],
+                                                  [KeyboardButton(text='Android 📱')],
                                                   [KeyboardButton(text='Скачал✅')],
-                                                  [KeyboardButton(text='Назад')]],
+                                                  [KeyboardButton(text='Назад ↩️')]],
                              resize_keyboard=True)
 
 iphone_kb = InlineKeyboardMarkup(inline_keyboard=[

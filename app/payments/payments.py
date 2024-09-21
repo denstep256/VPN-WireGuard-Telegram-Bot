@@ -9,22 +9,23 @@ from datetime import datetime, timedelta
 from sqlalchemy import select, delete, update
 
 import config
-from app.database.models import async_session, Static, Subscribers, Payments
+from app.database.models import async_session, Static, Subscribers, Payments, User
 
 from app.addons.utilits import calculate_expiry_date, check_available_clients_count, generate_client_name
 from app.wg_api.wg_api import add_client_wg, get_config_wg
 
 pay_router = Router()
 
+
 @pay_router.callback_query(F.data.startswith('one_month'))
 async def create_invoice(call: CallbackQuery):
     await call.bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
-    prices = [LabeledPrice(label='description', amount=199 * 100)]  # Сумма в копейках
+    prices = [LabeledPrice(label='Подписка на 1 месяц', amount=199 * 100)]  # Сумма в копейках
     await call.bot.send_invoice(
         chat_id=call.from_user.id,
-        title="Подписка",
-        description='description',
-        payload="subscription_monthly",
+        title="Доступ к VPN на 1 мес.",
+        description='Оплата картой в Telegram 💳. В поле электронная почта укажите СВОЮ почту, на неё придет ваш чек об оплате.',
+        payload="monthly_subs",
         provider_token=config.PAYMENT_TOKEN,
         currency="RUB",
         prices=prices,
@@ -33,16 +34,17 @@ async def create_invoice(call: CallbackQuery):
         is_flexible=False,
         need_shipping_address=False
     )
+
 
 @pay_router.callback_query(F.data.startswith('six_month'))
 async def create_invoice(call: CallbackQuery):
     await call.bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
-    prices = [LabeledPrice(label='description', amount=999 * 10)]  # Сумма в копейках
+    prices = [LabeledPrice(label='Подписка на 6 месяцев', amount=999 * 10)]  # Сумма в копейках
     await call.bot.send_invoice(
         chat_id=call.from_user.id,
-        title="Подписка",
-        description='description',
-        payload="subscription_semi_annual",
+        title="Доступ к VPN на 6 мес.",
+        description='Оплата картой в Telegram 💳. В поле электронная почта укажите СВОЮ почту, на неё придет ваш чек об оплате.',
+        payload="semi_annual_subs",
         provider_token=config.PAYMENT_TOKEN,
         currency="RUB",
         prices=prices,
@@ -52,15 +54,16 @@ async def create_invoice(call: CallbackQuery):
         need_shipping_address=False
     )
 
+
 @pay_router.callback_query(F.data.startswith('twelve_month'))
 async def create_invoice(call: CallbackQuery):
     await call.bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
-    prices = [LabeledPrice(label='description', amount=1799 * 10)]  # Сумма в копейках
+    prices = [LabeledPrice(label='Подписка на 12 месяцев', amount=1799 * 10)]  # Сумма в копейках
     await call.bot.send_invoice(
         chat_id=call.from_user.id,
-        title="Подписка",
-        description='description',
-        payload="subscription_annual",
+        title="Доступ к VPN на 12 мес.",
+        description='Оплата картой в Telegram 💳. В поле электронная почта укажите СВОЮ почту, на неё придет ваш чек об оплате.',
+        payload="annual_subs",
         provider_token=config.PAYMENT_TOKEN,
         currency="RUB",
         prices=prices,
@@ -74,6 +77,7 @@ async def create_invoice(call: CallbackQuery):
 @pay_router.pre_checkout_query()
 async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: Bot):
     # Проверка доступности файла конфигурации
+    #TODO: При продлении подписки не нужно проверять доступные файлы авторизации
     is_available = await check_available_clients_count()
 
     if is_available:
@@ -96,7 +100,7 @@ async def handle_successful_payment(message: Message):
 
         new_payment = Payments(
             tg_id=tg_id,
-            username = username,
+            username=username,
             summa=summa,
             time_to_add=datetime.now(),
             payload=payload,
@@ -104,7 +108,6 @@ async def handle_successful_payment(message: Message):
         )
         session.add(new_payment)
         await session.commit()
-
 
         #РАБОТАЕТ
         # 1. Проверка наличия пользователя в таблице static
@@ -133,41 +136,56 @@ async def handle_successful_payment(message: Message):
                 notif_oneday=False
             )
             session.add(new_subscriber)
+
+            user = await session.execute(
+                select(User).filter_by(tg_id=tg_id)
+            )
+            user = user.scalar_one_or_none()
+
+            if user:
+                user.is_active_subs = True
+                user.use_subs = True
+                session.add(user)
             await session.commit()
-            await message.answer(f'Ваша подписка успешно оформлена до {expiry_date}')
-            # TODO: Написать здесь текст с благодарностью за приобретение подписки и дальше будет отправлен файл авторизации, мб придумать тоже какой-нибудь интересный текст
+
+            await message.answer(f'Ваша подписка успешно оформлена и будет действовать до {expiry_date}.\n\nВаш файл авторизации будет отправлен вам в следующем сообщении. Также вы можете найти его в главном меню, нажав на кнопку <b>«Проверить подписку»</b>.\n\nБлагодарим вас за доверие! ❤️', parse_mode="HTML")
+
 
         else:
-            # 2. Проверка наличия пользователя в таблице subscribers
+            # 2. Проверка наличия пользователя в таблице subscribers и is_active_subs == True
             query = select(Subscribers).where(Subscribers.tg_id == tg_id)
-            # query = await session.scalar(select(Subscribers.tg_id == tg_id))
             result = await session.execute(query)
             user_in_subscribers = result.scalar_one_or_none()
 
-            if user_in_subscribers:
+            query_is_active_subs = select(User).where(User.is_active_subs == True)
+            result_subs = await session.execute(query_is_active_subs)
+            user_is_active_subs = result_subs.scalar_one_or_none()
+
+
+            if user_in_subscribers and user_is_active_subs:
                 #РАБОТАЕТ
                 # 3. Продление подписки для существующего пользователя
                 current_expiry_date = user_in_subscribers.expiry_date
 
                 # Определение нового срока подписки в зависимости от payload
-                if payload == 'subscription_monthly':
+                if payload == 'monthly_subs':
                     current_expiry_date = datetime.strptime(current_expiry_date,
                                                             "%Y-%m-%d")  # Укажи правильный формат даты
                     new_expiry_date = (current_expiry_date + timedelta(days=31)).date()
-                elif payload == 'subscription_semi_annual':
+                elif payload == 'semi_annual_subs':
                     current_expiry_date = datetime.strptime(current_expiry_date,
                                                             "%Y-%m-%d")
                     new_expiry_date = (current_expiry_date + timedelta(days=182)).date()  # полгода
-                elif payload == 'subscription_annual':
+                elif payload == 'annual_subs':
                     current_expiry_date = datetime.strptime(current_expiry_date,
                                                             "%Y-%m-%d")
                     new_expiry_date = (current_expiry_date + timedelta(days=365)).date()
 
                 # Обновляем срок подписки в базе данных
                 user_in_subscribers.expiry_date = new_expiry_date
+                user_in_subscribers.notif_oneday = False
                 await session.commit()
-                await message.answer(f'Ваша подписка успешно продлена до {new_expiry_date}')
-                #TODO: Здесь пользователь продлевает существующую подписку, после приобретения скинуть пользователю его файл конфигурации (Сначала сделать проверку из файлов на сервере, если там нет, то вытянуть с WG
+                await message.answer(f'Ваша подписка успешно продлена до {new_expiry_date}.\nБлагодарим вас за доверие! ❤️', parse_mode="HTML")
 
             else:
                 #РАБОТАЕТ
@@ -185,9 +203,20 @@ async def handle_successful_payment(message: Message):
                     notif_oneday=False
                 )
                 session.add(new_subscriber)
+
+                user = await session.execute(
+                    select(User).filter_by(tg_id=tg_id)
+                )
+                user = user.scalar_one_or_none()
+
+                if user:
+                    user.is_active_subs = True
+                    user.use_subs = True
+                    session.add(user)
                 await session.commit()
-                await message.answer(f'Ваша подписка успешно оформлена до {expiry_date}')
-                #TODO: Написать здесь текст с благодарностью за приобретение подписки и дальше будет отправлен файл авторизации, мб придумать тоже какой-нибудь интересный текст
+
+                await message.answer(f'Ваша подписка успешно оформлена и будет действовать до {expiry_date}.\n\nВаш файл авторизации будет отправлен вам в следующем сообщении. Также вы можете найти его в главном меню, нажав на кнопку <b>«Проверить подписку»</b>.\n\nБлагодарим вас за доверие! ❤️', parse_mode="HTML")
+
 
         query = select(Subscribers).filter_by(file_name='check', tg_id=tg_id)
         result = await session.execute(query)
@@ -209,6 +238,7 @@ async def handle_successful_payment(message: Message):
             )
             await session.execute(update_query)
             await session.commit()
+            #Возвращаем файл конфигурации при продлении подписки
         else:
             # Формируем запрос для получения file_name по tg_id
             query = select(Subscribers.file_name).filter_by(tg_id=tg_id)
@@ -219,8 +249,7 @@ async def handle_successful_payment(message: Message):
             document = FSInputFile(file_path)
             await message.answer_document(document)
 
-
 #TODO: После успешной оплаты, нужно удалить счет, который присылается create_invoice
 #TODO: Посмотреть файл trial, найти там места где нужно вывести сообщение и написать там todo
 #TODO: Вообще в целом посмотреть всю программу и написать todo там, где нужно написать красивый текст
-#TODO: Текста по возможности писать ы text.json
+#TODO: Текста по возможности писать в text.json
