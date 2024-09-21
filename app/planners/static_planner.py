@@ -1,7 +1,9 @@
+import os
+
 from aiogram import Bot
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from sqlalchemy import select, update
+from sqlalchemy import select
 from app.database.models import async_session, User, Static
 
 async def update_static(bot: Bot):
@@ -26,7 +28,6 @@ async def update_static(bot: Bot):
                     use_subs=user.use_subs # Взято из таблицы User
                 )
                 session.add(new_static_user)
-
         # Применяем изменения в базе данных
         await session.commit()
 
@@ -41,7 +42,7 @@ def setup_scheduler_update_static(bot: Bot):
     # Настройка задачи для проверки подписок (например, раз в день)
     scheduler.add_job(
         update_static,
-        trigger=IntervalTrigger(seconds=10),  # Задаём интервал выполнения
+        trigger=IntervalTrigger(hours=4),  # Задаём интервал выполнения
         id='update_static',
         kwargs={'bot': bot},
         replace_existing=True

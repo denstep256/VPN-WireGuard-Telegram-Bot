@@ -1,5 +1,4 @@
-from aiogram.types import (ReplyKeyboardMarkup, KeyboardButton,
-                           InlineKeyboardMarkup, InlineKeyboardButton)
+from aiogram.types import (ReplyKeyboardMarkup, KeyboardButton)
 
 main_admin = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='Купить 💳')],
                                      [KeyboardButton(text='Проверить подписку ✅')],

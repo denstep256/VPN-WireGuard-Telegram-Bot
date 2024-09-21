@@ -67,7 +67,7 @@ def setup_scheduler_trial_notif_end_day(bot: Bot):
     # Настройка задачи для проверки подписок (например, раз в день)
     scheduler.add_job(
         check_subscriptions_trial,
-        trigger=IntervalTrigger(seconds=10),  # Задаём интервал выполнения
+        trigger=IntervalTrigger(hours=8),  # Задаём интервал выполнения
         id='check_subscriptions_trial_end_day',
         kwargs={'bot': bot},
         replace_existing=True

@@ -1,11 +1,8 @@
-from aiogram.client import bot
-from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 
-from aiogram import Router, F, Bot
+from aiogram import Router, F
 from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.admin.admin_keyboard as kb
 from app.wg_api.wg_api import get_client_count_wg

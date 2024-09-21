@@ -182,13 +182,11 @@ async def get_client_count(server: Server) -> int:
     :param server: Экземпляр сервера
     :return: Количество клиентов
     """
-    try:
-        clients = await server.get_clients()
-        client_count = len(clients)
-        print(f"Количество клиентов: {client_count}")
-        return client_count
-    except Exception as e:
-        print(f"Ошибка при получении количества клиентов: {e}")
-        return 0  # Возвращаем 0 в случае ошибки
+
+    clients = await server.get_clients()
+    client_count = len(clients)
+    return client_count
+
+
 
 
