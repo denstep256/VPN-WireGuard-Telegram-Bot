@@ -38,9 +38,9 @@ def delete_file_by_name(client_name: str):
     # Проверка на существование файла и его удаление
     if os.path.exists(file_path):
         os.remove(file_path)
-        print(f"Файл {client_name} удален.")
-    else:
-        print(f"Файл {client_name} не найден.")
+    #     print(f"Файл {client_name} удален.")
+    # else:
+    #     print(f"Файл {client_name} не найден.")
 
 
 async def calculate_expiry_date(payload):
@@ -55,3 +55,13 @@ async def calculate_expiry_date(payload):
         return expiry_date_annual.date()
     else:
         raise ValueError("Invalid subscription duration")
+
+def determine_subscription_type(days):
+    if days < 31:
+        return "less_month"
+    elif days > 31:
+        return "more_month"
+    elif 31 < days < 181:
+        return "less_annual"
+    else:
+        return "more_annual"

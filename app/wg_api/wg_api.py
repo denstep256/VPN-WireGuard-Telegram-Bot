@@ -62,13 +62,14 @@ async def authorize(server: Server) -> None:
     """
     Авторизует пользователя на сервере wg-easy.
     """
-    try:
-        await server.login()
-        print("Успешно авторизован!")
-    except AlreadyLoggedInError:
-        print("Уже авторизован!")
-    except Exception as e:
-        print(f"Ошибка авторизации: {e}")
+    await server.login()
+    # try:
+    #     await server.login()
+    #     print("Успешно авторизован!")
+    # except AlreadyLoggedInError:
+    #     print("Уже авторизован!")
+    # except Exception as e:
+    #     print(f"Ошибка авторизации: {e}")
 
 async def remove_client_by_name(server: Server, client_name: str) -> None:
     """
@@ -77,26 +78,21 @@ async def remove_client_by_name(server: Server, client_name: str) -> None:
     :param server: Экземпляр сервера
     :param client_name: Имя клиента для удаления
     """
-    try:
-        # Получаем список всех клиентов
-        clients = await server.get_clients()
 
-        # Ищем клиента по имени
-        client_to_remove = None
-        for client in clients:
-            if client.name == client_name:
-                client_to_remove = client
-                break
+    # Получаем список всех клиентов
+    clients = await server.get_clients()
 
-        if client_to_remove:
+    # Ищем клиента по имени
+    client_to_remove = None
+    for client in clients:
+        if client.name == client_name:
+            client_to_remove = client
+            break
+
+    if client_to_remove:
             # Удаляем клиента по его UID
-            await server.remove_client(client_to_remove.uid)
-            print(f"Клиент '{client_name}' (UID: {client_to_remove.uid}) успешно удален.")
-        else:
-            print(f"Клиент с именем '{client_name}' не найден.")
+        await server.remove_client(client_to_remove.uid)
 
-    except Exception as e:
-        print(f"Ошибка при удалении клиента '{client_name}': {e}")
 
 async def add_client(server: Server, client_name: str) -> None:
     """
@@ -105,11 +101,12 @@ async def add_client(server: Server, client_name: str) -> None:
     :param server: Экземпляр сервера
     :param client_name: Имя нового клиента
     """
-    try:
-        await server.create_client(client_name)
-        print(f"Клиент {client_name} успешно добавлен.")
-    except Exception as e:
-        print(f"Ошибка при добавлении клиента {client_name}: {e}")
+    await server.create_client(client_name)
+    # try:
+    #     await server.create_client(client_name)
+    #     print(f"Клиент {client_name} успешно добавлен.")
+    # except Exception as e:
+    #     print(f"Ошибка при добавлении клиента {client_name}: {e}")
 
 async def get_client_configuration_by_name(server: Server, client_name: str) -> str:
     """
@@ -133,13 +130,13 @@ async def get_client_configuration_by_name(server: Server, client_name: str) -> 
         if client_to_get:
             # Получаем конфигурацию клиента
             config = await client_to_get.get_configuration()
-            print(f"Конфигурация клиента '{client_name}' успешно получена.")
+            # print(f"Конфигурация клиента '{client_name}' успешно получена.")
             return config
         else:
-            print(f"Клиент с именем '{client_name}' не найден.")
+            # print(f"Клиент с именем '{client_name}' не найден.")
             return None
     except Exception as e:
-        print(f"Ошибка при получении конфигурации клиента '{client_name}': {e}")
+        # print(f"Ошибка при получении конфигурации клиента '{client_name}': {e}")
         return None
 
 async def save_client_configuration(server: Server, client_name: str) -> str:
@@ -155,7 +152,7 @@ async def save_client_configuration(server: Server, client_name: str) -> str:
         config_text = await get_client_configuration_by_name(server, client_name)
 
         if config_text is None:
-            print(f"Конфигурация для клиента {client_name} не найдена.")
+            # print(f"Конфигурация для клиента {client_name} не найдена.")
             return None
 
         # Указываем путь к папке auth
@@ -168,11 +165,11 @@ async def save_client_configuration(server: Server, client_name: str) -> str:
         with open(file_path, "w") as config_file:
             config_file.write(config_text)
 
-        print(f"Конфигурация клиента {client_name} успешно сохранена в {file_path}.")
+        # print(f"Конфигурация клиента {client_name} успешно сохранена в {file_path}.")
         return file_path
 
     except Exception as e:
-        print(f"Ошибка при сохранении конфигурации для клиента {client_name}: {e}")
+        # print(f"Ошибка при сохранении конфигурации для клиента {client_name}: {e}")
         return None
 
 async def get_client_count(server: Server) -> int:

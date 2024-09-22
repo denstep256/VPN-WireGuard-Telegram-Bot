@@ -76,17 +76,26 @@ async def create_invoice(call: CallbackQuery):
 
 @pay_router.pre_checkout_query()
 async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: Bot):
-    # Проверка доступности файла конфигурации
-    #TODO: При продлении подписки не нужно проверять доступные файлы авторизации
-    is_available = await check_available_clients_count()
+    async with async_session() as session:
+        # Проверка, есть ли пользователь в базе данных Subscribers
+        user_in_subscribers = await session.scalar(
+            select(Subscribers).where(Subscribers.tg_id == pre_checkout_query.from_user.id)
+        )
 
-    if is_available:
-        # Разрешить продолжение процесса оплаты
+    if user_in_subscribers:
+        # Если пользователь уже есть в таблице Subscribers, разрешить оплату
         await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
     else:
-        # Отклонить оплату, если файлы недоступны
-        await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=False,
-                                            error_message="К сожалению, нет доступных файлов конфигурации.")
+        # Если пользователя нет в базе данных, проверяем доступные файлы
+        is_available = await check_available_clients_count()
+
+        if is_available:
+            # Разрешить оплату, если доступные файлы есть
+            await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+        else:
+            # Отклонить оплату, если файлы недоступны
+            await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=False,
+                                                error_message="К сожалению, нет доступных файлов конфигурации.")
 
 
 @pay_router.message(F.successful_payment)
@@ -157,10 +166,18 @@ async def handle_successful_payment(message: Message):
             result = await session.execute(query)
             user_in_subscribers = result.scalar_one_or_none()
 
-            query_is_active_subs = select(User).where(User.is_active_subs == True)
+            query_is_active_subs = select(User).where(User.is_active_subs == True, User.tg_id == tg_id)
             result_subs = await session.execute(query_is_active_subs)
             user_is_active_subs = result_subs.scalar_one_or_none()
 
+            # Проверка наличия пользователя в таблице subscribers и у него is_active_subs == True в таблице User
+            # query = (
+            #     select(Subscribers)
+            #     .join(User)  # Объединяем таблицы Subscribers и User
+            #     .where(Subscribers.tg_id == tg_id, User.is_active_subs == True)
+            # )
+            # result = await session.execute(query)
+            # user_in_subscribers_with_active_subs = result.scalar_one_or_none()
 
             if user_in_subscribers and user_is_active_subs:
                 #РАБОТАЕТ
@@ -184,6 +201,8 @@ async def handle_successful_payment(message: Message):
                 # Обновляем срок подписки в базе данных
                 user_in_subscribers.expiry_date = new_expiry_date
                 user_in_subscribers.notif_oneday = False
+                user_in_subscribers.note = ' '
+                user_in_subscribers.subscription = payload
                 await session.commit()
                 await message.answer(f'Ваша подписка успешно продлена до {new_expiry_date}.\nБлагодарим вас за доверие! ❤️', parse_mode="HTML")
 
@@ -249,7 +268,3 @@ async def handle_successful_payment(message: Message):
             document = FSInputFile(file_path)
             await message.answer_document(document)
 
-#TODO: После успешной оплаты, нужно удалить счет, который присылается create_invoice
-#TODO: Посмотреть файл trial, найти там места где нужно вывести сообщение и написать там todo
-#TODO: Вообще в целом посмотреть всю программу и написать todo там, где нужно написать красивый текст
-#TODO: Текста по возможности писать в text.json

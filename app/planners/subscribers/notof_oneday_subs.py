@@ -21,7 +21,6 @@ async def check_subscriptions(bot: Bot):
         for subscription in expiring_subscriptions:
             user_id = subscription.tg_id
             message = f"⏳ Ваша подписка истекает завтра, {subscription.expiry_date}.\nНе забудьте продлить, чтобы не потерять доступ! 🚀"
-            #TODO: Добавить чтобы после соообщения присылался счет на оплату подписки
 
             # Отправляем сообщение в Telegram
             await bot.send_message(chat_id=user_id, text=message, parse_mode='HTML')

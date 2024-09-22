@@ -10,13 +10,7 @@ from config import ADMIN_ID
 from app.database.models import async_session, TestPeriod, User
 from app.database.models import Subscribers
 
-from aiogram.fsm.state import State, StatesGroup
-
-class AdminState(StatesGroup):
-    waiting_for_message = State()
-
 admin_router = Router()
-
 
 @admin_router.message(F.text == 'Админ')
 async def admin_panel_button(message: Message):
@@ -84,13 +78,6 @@ async def users_with_trial_period_admin(message: Message):
         await message.answer('У вас нет доступа')
 
 
-@admin_router.message(F.text == 'Рассылка')
-async def admin_panel_button(message: Message):
-    if message.from_user.id == int(ADMIN_ID):
-        await message.answer('Выберите вариант рассылки', reply_markup=kb.send_kb)
-    else:
-        await message.answer('У вас нет доступа')
-
 @admin_router.message(F.text == 'Статистика')
 async def admin_panel_button(message: Message):
     if message.from_user.id == int(ADMIN_ID):
@@ -102,15 +89,5 @@ async def admin_panel_button(message: Message):
 async def help_main_button(message: Message):
     if message.from_user.id == int(ADMIN_ID):
         await message.answer('Вы вернулись в главное меню', reply_markup=kb.admin_panel)
-    else:
-        await message.answer('У вас нет доступа')
-
-#TODO: Рассылка
-@admin_router.message(F.text == 'Без фото')
-async def help_main_button(message: Message):
-    if message.from_user.id == int(ADMIN_ID):
-
-
-        await message.answer('Отправка началась', reply_markup=kb.admin_panel)
     else:
         await message.answer('У вас нет доступа')
