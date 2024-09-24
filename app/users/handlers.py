@@ -25,7 +25,6 @@ async def cmd_start(message: Message):
                       message.from_user.username,
                       message.from_user.first_name,
                       datetime.now())
-
     await message.answer(texts_for_bot["start_message"], parse_mode='HTML', reply_markup=kb.main)
     if message.from_user.id == int(ADMIN_ID):
         await message.answer('Вы авторизовались как администратор', reply_markup=admin_kb.main_admin)

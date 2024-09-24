@@ -11,6 +11,7 @@ from app.payments.payments import pay_router
 from app.users.trial import trial_router
 from app.admin.admin_commands_sender import admin_command_router
 from app.admin.admin_commands_add_subs import admin_command_add_subs_router
+from app.admin.admin_commands_delite_subs import admin_command_delite_subs_router
 
 from app.planners.static_planner import setup_scheduler_update_static
 from app.planners.subscribers.notif_end_day_subs import setup_scheduler_subs_notif_end_day
@@ -41,8 +42,11 @@ async def main():
     dp.include_router(admin_router)
     dp.include_router(admin_command_router)
     dp.include_router(admin_command_add_subs_router)
+    dp.include_router(admin_command_delite_subs_router)
 
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
     asyncio.run(main())
+
+

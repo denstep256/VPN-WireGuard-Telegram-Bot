@@ -26,22 +26,35 @@ async def issue_subscription(message: Message, state: FSMContext):
     else:
         await message.answer('У вас нет доступа')
 
+
 @admin_command_add_subs_router.message(ManualSubscriptionState.waiting_for_user_id)
 async def get_user_id(message: Message, state: FSMContext):
     tg_id = message.text
     async with async_session() as session:
+        # Сначала проверяем таблицу Subscribers
         result = await session.execute(select(Subscribers).where(Subscribers.tg_id == tg_id))
-        user = result.scalar_one_or_none()
+        subscriber = result.scalar_one_or_none()
+
+        if not subscriber:
+            # Если в Subscribers не найден, проверяем таблицу User
+            result = await session.execute(select(User).where(User.tg_id == tg_id))
+            user = result.scalar_one_or_none()
+
         await session.commit()
 
     await state.update_data(tg_id=tg_id)
 
-    if user:
-        await message.answer('У пользователя найдена активная подписка. Введите количество дней, которые нужно добавить:')
+    if subscriber:
+        await message.answer(
+            'У пользователя найдена активная подписка. Введите количество дней, которые нужно добавить:')
+        await state.set_state(ManualSubscriptionState.waiting_for_days)
+    elif user:
+        await message.answer('Пользователь найден в системе. Введите количество дней, которые нужно добавить:')
         await state.set_state(ManualSubscriptionState.waiting_for_days)
     else:
-        await message.answer('Пользователь не найден. Введите количество дней, которые нужно добавить:')
-        await state.set_state(ManualSubscriptionState.waiting_for_days)
+        await message.answer('Пользователь не найден в системе.')
+        await state.clear()  # Сбрасываем состояние, если пользователь не найден
+
 
 @admin_command_add_subs_router.message(ManualSubscriptionState.waiting_for_days)
 async def update_subscription(message: Message, state: FSMContext):
