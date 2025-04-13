@@ -1,20 +1,11 @@
 import os
-from app.payments.models import SubscriptionDuration
-from datetime import timedelta
+
+
+from datetime import timedelta, datetime
 import random
 
 from app.wg_api.wg_api import get_client_count_wg
 
-
-def calculate_expiry_date(current_end_date, duration):
-    if duration == SubscriptionDuration.MONTHLY:
-        return current_end_date + timedelta(days=30)
-    elif duration == SubscriptionDuration.SEMI_ANNUAL:
-        return current_end_date + timedelta(days=180)
-    elif duration == SubscriptionDuration.ANNUAL:
-        return current_end_date + timedelta(days=365)
-    else:
-        raise ValueError("Invalid subscription duration")
 
 # Глобальная переменная для хранения уникальных имен
 generated_usernames = set()
@@ -37,7 +28,7 @@ def generate_client_name() -> str:
 async def check_available_clients_count() -> bool:
     count = await get_client_count_wg()
     # Проверка количества клиентов
-    if count < 252:
+    if count < 253:
         return True
     else:
         return False
@@ -48,7 +39,30 @@ def delete_file_by_name(client_name: str):
     # Проверка на существование файла и его удаление
     if os.path.exists(file_path):
         os.remove(file_path)
-        print(f"Файл {client_name} удален.")
-    else:
-        print(f"Файл {client_name} не найден.")
+    #     print(f"Файл {client_name} удален.")
+    # else:
+    #     print(f"Файл {client_name} не найден.")
 
+
+async def calculate_expiry_date(payload):
+    if payload == 'monthly_subs':
+        expiry_date_month = datetime.now() + timedelta(days=31)
+        return expiry_date_month.date()
+    elif payload == 'semi_annual_subs':
+        expiry_date_semi = datetime.now() + timedelta(days=182)
+        return expiry_date_semi.date()
+    elif payload == 'annual_subs':
+        expiry_date_annual = datetime.now() + timedelta(days=365)
+        return expiry_date_annual.date()
+    else:
+        raise ValueError("Invalid subscription duration")
+
+def determine_subscription_type(days):
+    if days < 31:
+        return "less_month"
+    elif days > 31:
+        return "more_month"
+    elif 31 < days < 181:
+        return "less_annual"
+    else:
+        return "more_annual"

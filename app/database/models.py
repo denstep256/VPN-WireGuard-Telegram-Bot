@@ -16,10 +16,13 @@ class User(Base):
     __tablename__ = 'users'
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    tg_id = mapped_column(BigInteger)
+    tg_id = mapped_column(BigInteger, unique=True)
     username: Mapped[str] = mapped_column(String(25))
     first_name: Mapped[str] = mapped_column(String(25))
-    test_period = mapped_column(Boolean, default=False)
+    use_trial = mapped_column(Boolean, default=False)
+    use_subs = mapped_column(Boolean, default=False)
+    is_active_trial = mapped_column(Boolean, default=False)
+    is_active_subs = mapped_column(Boolean, default=False)
     date_add: Mapped[str] = mapped_column(String(25))
 
 class Payments(Base):
@@ -27,9 +30,11 @@ class Payments(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tg_id = mapped_column(BigInteger)
-    amount: Mapped[int] = mapped_column()
+    username: Mapped[str] = mapped_column(String(25))
+    summa: Mapped[int] = mapped_column()
     time_to_add: Mapped[str] = mapped_column(String(25))
     payload: Mapped[str] = mapped_column(String(25))
+    provider_payment_charge_id: Mapped[str] = mapped_column(String(25))
 
 class Static(Base):
     __tablename__ = 'static'
@@ -37,6 +42,8 @@ class Static(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     tg_id = mapped_column(BigInteger)
     username: Mapped[str] = mapped_column(String(25))
+    use_trial = mapped_column(Boolean, default=False)
+    use_subs = mapped_column(Boolean, default=False)
 
 class Subscribers(Base):
     __tablename__ = 'subscribers'
@@ -48,6 +55,7 @@ class Subscribers(Base):
     subscription: Mapped[str] = mapped_column(String(25))
     expiry_date: Mapped[str] = mapped_column(String(25))
     notif_oneday = mapped_column(Boolean, default=False)
+    #note нужно для ручного добавления подписки
     note: Mapped[str | None] = mapped_column(String, nullable=True, default="")
 
 class TestPeriod(Base):

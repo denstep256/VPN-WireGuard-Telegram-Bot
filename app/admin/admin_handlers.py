@@ -1,17 +1,16 @@
-import json
+from aiogram.types import Message
 
-from aiogram.types import Message, FSInputFile
-from aiogram.filters import CommandStart
+
 from aiogram import Router, F
 from sqlalchemy import select, func
 
 import app.admin.admin_keyboard as kb
+from app.wg_api.wg_api import get_client_count_wg
 from config import ADMIN_ID
-from app.database.models import async_session, TestPeriod
+from app.database.models import async_session, TestPeriod, User
 from app.database.models import Subscribers
 
 admin_router = Router()
-
 
 @admin_router.message(F.text == 'Админ')
 async def admin_panel_button(message: Message):
@@ -27,7 +26,6 @@ async def help_main_button(message: Message):
     else:
         await message.answer('У вас нет доступа')
 
-
 @admin_router.message(F.text == 'Пользователи с подпиской')
 async def users_with_subscribe_admin(message: Message):
     if message.from_user.id == int(ADMIN_ID):
@@ -38,7 +36,8 @@ async def users_with_subscribe_admin(message: Message):
             )
 
             # Отправляем сообщение с количеством пользователей
-            await message.answer(f'Количество пользователей с активной подпиской: {result}', reply_markup=kb.admin_panel)
+            await message.answer(f'Количество пользователей с активной подпиской: {result}',
+                                 reply_markup=kb.stat_kb)
     else:
         await message.answer('У вас нет доступа')
 
@@ -53,6 +52,42 @@ async def users_with_trial_period_admin(message: Message):
 
             # Отправляем сообщение с количеством пользователей
             await message.answer(f'Количество пользователей с активной пробной подпиской: {result}',
-                                 reply_markup=kb.admin_panel)
+                                 reply_markup=kb.stat_kb)
+    else:
+        await message.answer('У вас нет доступа')
+
+@admin_router.message(F.text == 'Клиенты на сервере')
+async def clients_on_server_wg(message: Message):
+    if message.from_user.id == int(ADMIN_ID):
+        result = await get_client_count_wg()
+        await message.answer(f'Количество пользователей на сервере WG: {result}',
+                                 reply_markup=kb.stat_kb)
+    else:
+        await message.answer('У вас нет доступа')
+
+@admin_router.message(F.text == 'Пользователи в боте')
+async def users_with_trial_period_admin(message: Message):
+    if message.from_user.id == int(ADMIN_ID):
+        async with async_session() as session:
+            result = await session.execute(select(func.count()).select_from(User))
+            users_count = result.scalar()  # Получаем количество пользователей
+
+            await message.answer(f'Количество пользователей в users: {users_count}',
+                                 reply_markup=kb.stat_kb)
+    else:
+        await message.answer('У вас нет доступа')
+
+
+@admin_router.message(F.text == 'Статистика')
+async def admin_panel_button(message: Message):
+    if message.from_user.id == int(ADMIN_ID):
+        await message.answer('Выберите параметр, который вас интересует', reply_markup=kb.stat_kb)
+    else:
+        await message.answer('У вас нет доступа')
+
+@admin_router.message(F.text == 'Назад Админ')
+async def help_main_button(message: Message):
+    if message.from_user.id == int(ADMIN_ID):
+        await message.answer('Вы вернулись в главное меню', reply_markup=kb.admin_panel)
     else:
         await message.answer('У вас нет доступа')
