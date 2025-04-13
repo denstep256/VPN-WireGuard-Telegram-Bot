@@ -31,16 +31,16 @@
 2. Устанавливаем WireGuard на сервер. Как это сделать: https://github.com/wg-easy/wg-easy/tree/production
 3. Создайте в корне проекта файл config.py и поместите туда
 ```python
-TOKEN='TELEGRAM'
+TOKEN='TELEGRAM_API_TOKEN'
 DB_URL_USERS='sqlite+aiosqlite:///db.sqlite3'
 DB_URL_KEYS='sqlite:///issued_keys.sqlite3'
 
-PAYMENT_TOKEN='381764678:TEST:95145'
+PAYMENT_TOKEN='PAYMENT_TOKEN_YKASSA'
 
-WG_API='rufvyh-keksam-fUcjo0'
-WG_ADDRESS='http://147.45.174.189:51821'
+WG_API='PASSWORD_WG_PANNEL'
+WG_ADDRESS='URL_WG_SERVER'
 
-ADMIN_ID='360395051'
+ADMIN_ID='ID_TELEGRAM_ADMIN_USER'
 ```
 4. Установите зависимости
 ```bash
