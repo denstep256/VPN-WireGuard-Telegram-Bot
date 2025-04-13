@@ -41,3 +41,5 @@ Thumbs.db
 *.egg-info/
 
 config.py
+
+app/Pictures/WireGuard_ logo.jpeg
