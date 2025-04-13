@@ -1,2 +1,43 @@
-# Project exclude paths
-/.venv/
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+.venv/
+env/
+venv/
+ENV/
+
+# PyCharm project files
+.idea/
+
+# Logs
+*.log
+
+# SQLite databases
+*.sqlite3
+*.db
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Testing / debug
+*.swp
+*.tmp
+
+# Compiled C extensions
+*.so
+
+# Backup files
+*~
+
+# Ignore environment variables
+.env
+
+# Cache
+.cache/
+*.egg-info/
+
+config.py
