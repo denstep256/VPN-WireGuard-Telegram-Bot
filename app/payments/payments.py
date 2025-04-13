@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 from aiogram import Bot
 
@@ -17,8 +18,22 @@ from app.wg_api.wg_api import add_client_wg, get_config_wg
 pay_router = Router()
 
 
+
 @pay_router.callback_query(F.data.startswith('one_month'))
 async def create_invoice(call: CallbackQuery):
+    PROVIDER_DATA_WO_EMAIL_MONTH = {
+        "receipt": {
+            "items": [{
+                "description": "Подписка на 1 месяц",
+                "quantity": "1.00",
+                "amount": {
+                    "value": "199.00",
+                    "currency": "RUB"
+                },
+                "vat_code": 1
+            }]
+        }
+    }
     await call.bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
     prices = [LabeledPrice(label='Подписка на 1 месяц', amount=199 * 100)]  # Сумма в копейках
     await call.bot.send_invoice(
@@ -31,15 +46,29 @@ async def create_invoice(call: CallbackQuery):
         prices=prices,
         start_parameter="subscription",
         need_email=True,
-        is_flexible=False,
-        need_shipping_address=False
+        send_email_to_provider=True,
+        provider_data=json.dumps(PROVIDER_DATA_WO_EMAIL_MONTH),
     )
+
 
 
 @pay_router.callback_query(F.data.startswith('six_month'))
 async def create_invoice(call: CallbackQuery):
+    PROVIDER_DATA_WO_EMAIL_SEMI = {
+        "receipt": {
+            "items": [{
+                "description": "Подписка на 6 месяцев",
+                "quantity": "1.00",
+                "amount": {
+                    "value": "999.00",
+                    "currency": "RUB"
+                },
+                "vat_code": 1
+            }]
+        }
+    }
     await call.bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
-    prices = [LabeledPrice(label='Подписка на 6 месяцев', amount=999 * 10)]  # Сумма в копейках
+    prices = [LabeledPrice(label='Подписка на 6 месяцев', amount=999 * 100)]  # Сумма в копейках
     await call.bot.send_invoice(
         chat_id=call.from_user.id,
         title="Доступ к VPN на 6 мес.",
@@ -50,15 +79,28 @@ async def create_invoice(call: CallbackQuery):
         prices=prices,
         start_parameter="subscription",
         need_email=True,
-        is_flexible=False,
-        need_shipping_address=False
+        send_email_to_provider=True,
+        provider_data=json.dumps(PROVIDER_DATA_WO_EMAIL_SEMI),
     )
 
 
 @pay_router.callback_query(F.data.startswith('twelve_month'))
 async def create_invoice(call: CallbackQuery):
+    PROVIDER_DATA_WO_EMAIL_ANNUAL = {
+        "receipt": {
+            "items": [{
+                "description": "Подписка на 12 месяцев",
+                "quantity": "1.00",
+                "amount": {
+                    "value": "1799.00",
+                    "currency": "RUB"
+                },
+                "vat_code": 1
+            }]
+        }
+    }
     await call.bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
-    prices = [LabeledPrice(label='Подписка на 12 месяцев', amount=1799 * 10)]  # Сумма в копейках
+    prices = [LabeledPrice(label='Подписка на 12 месяцев', amount=1799 * 100)]  # Сумма в копейках
     await call.bot.send_invoice(
         chat_id=call.from_user.id,
         title="Доступ к VPN на 12 мес.",
@@ -69,8 +111,8 @@ async def create_invoice(call: CallbackQuery):
         prices=prices,
         start_parameter="subscription",
         need_email=True,
-        is_flexible=False,
-        need_shipping_address=False
+        send_email_to_provider=True,
+        provider_data=json.dumps(PROVIDER_DATA_WO_EMAIL_ANNUAL),
     )
 
 
