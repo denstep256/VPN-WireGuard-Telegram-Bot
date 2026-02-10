@@ -309,4 +309,3 @@ async def handle_successful_payment(message: Message):
             file_path = f"app/auth/{file_name}.conf"  # Укажи правильный путь к файлу
             document = FSInputFile(file_path)
             await message.answer_document(document)
-
