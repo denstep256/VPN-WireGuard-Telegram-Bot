@@ -19,11 +19,8 @@ class User(Base):
     tg_id = mapped_column(BigInteger, unique=True)
     username: Mapped[str] = mapped_column(String(25))
     first_name: Mapped[str] = mapped_column(String(25))
-    use_trial = mapped_column(Boolean, default=False)
-    use_subs = mapped_column(Boolean, default=False)
-    is_active_trial = mapped_column(Boolean, default=False)
-    is_active_subs = mapped_column(Boolean, default=False)
-    date_add: Mapped[str] = mapped_column(String(25))
+    date: Mapped[str] = mapped_column(String(25))
+    is_buy_subs = mapped_column(Boolean, default=False)
 
 class Payments(Base):
     __tablename__ = 'payments'
@@ -31,19 +28,10 @@ class Payments(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     tg_id = mapped_column(BigInteger)
     username: Mapped[str] = mapped_column(String(25))
-    summa: Mapped[int] = mapped_column()
-    time_to_add: Mapped[str] = mapped_column(String(25))
-    payload: Mapped[str] = mapped_column(String(25))
+    price: Mapped[int] = mapped_column()
+    date: Mapped[str] = mapped_column(String(25))
+    tarific_plan: Mapped[str] = mapped_column(String(25))
     provider_payment_charge_id: Mapped[str] = mapped_column(String(25))
-
-class Static(Base):
-    __tablename__ = 'static'
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    tg_id = mapped_column(BigInteger)
-    username: Mapped[str] = mapped_column(String(25))
-    use_trial = mapped_column(Boolean, default=False)
-    use_subs = mapped_column(Boolean, default=False)
 
 class Subscribers(Base):
     __tablename__ = 'subscribers'
@@ -69,6 +57,25 @@ class TestPeriod(Base):
     expiry_date: Mapped[str] = mapped_column(String(25))
     notif_oneday = mapped_column(Boolean, default=False)
 
+class Server(Base):
+    __tablename__ = 'servers'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    region = mapped_column(String(25))
+    region_id = mapped_column(BigInteger)
+    host_ip = mapped_column(BigInteger)
+    port = mapped_column(BigInteger)
+    password = mapped_column(String(25))
+    date = mapped_column(String(25))
+    is_active = mapped_column(Boolean, default=True)
+
+class Price(Base):
+    __tablename__ = 'prices'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name = mapped_column(String(25))
+    duration_day = mapped_column(BigInteger)
+    price = mapped_column(BigInteger)
 
 async def async_main():
     async with engine.begin() as conn:
