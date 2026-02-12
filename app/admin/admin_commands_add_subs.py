@@ -132,5 +132,3 @@ async def update_subscription(message: Message, state: FSMContext):
     await message.answer(f'Подписка выдана на {days} дней.')
 
     await state.clear()
-
-
