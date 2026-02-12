@@ -12,8 +12,8 @@ async def set_user_start(tg_id, username, first_name, date_add):
         if not user_in_user:
             new_user = User(
                 tg_id=tg_id,
-                username=username,
-                first_name=first_name,
+                username=username or "unknown",
+                first_name=first_name or "unknown",
                 date=date_add,
             )
             session.add(new_user)

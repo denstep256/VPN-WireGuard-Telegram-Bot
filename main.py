@@ -1,6 +1,7 @@
 import config
 import asyncio
 
+from app.admin.admin_commands_add_server import admin_command_add_server_router
 from app.database.models import async_main
 
 from aiogram import Bot, Dispatcher
@@ -43,6 +44,7 @@ async def main():
     dp.include_router(admin_command_router)
     dp.include_router(admin_command_add_subs_router)
     dp.include_router(admin_command_delite_subs_router)
+    dp.include_router(admin_command_add_server_router)
 
     await dp.start_polling(bot)
 

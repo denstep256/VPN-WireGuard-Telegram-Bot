@@ -17,8 +17,8 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tg_id = mapped_column(BigInteger, unique=True)
-    username: Mapped[str] = mapped_column(String(25))
-    first_name: Mapped[str] = mapped_column(String(25))
+    username: Mapped[str] = mapped_column(String(25), nullable=True)
+    first_name: Mapped[str] = mapped_column(String(25), nullable=True)
     date: Mapped[str] = mapped_column(String(25))
 
 class Payments(Base):
@@ -26,7 +26,7 @@ class Payments(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tg_id = mapped_column(BigInteger)
-    username: Mapped[str] = mapped_column(String(25))
+    username: Mapped[str] = mapped_column(String(25), nullable=True)
     price: Mapped[int] = mapped_column()
     date: Mapped[str] = mapped_column(String(25))
     tarific_plan: Mapped[str] = mapped_column(String(25))
@@ -37,7 +37,7 @@ class Subscribers(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tg_id = mapped_column(BigInteger)
-    username: Mapped[str] = mapped_column(String(25))
+    username: Mapped[str] = mapped_column(String(25), nullable=True)
     file_name: Mapped[str] = mapped_column(String(25))
     subscription: Mapped[str] = mapped_column(String(25))
     expiry_date: Mapped[str] = mapped_column(String(25))
@@ -52,7 +52,7 @@ class TestPeriod(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tg_id = mapped_column(BigInteger)
-    username: Mapped[str] = mapped_column(String(25))
+    username: Mapped[str] = mapped_column(String(25), nullable=True)
     file_name: Mapped[str] = mapped_column(String(25))
     subscription: Mapped[str] = mapped_column(String(25))
     expiry_date: Mapped[str] = mapped_column(String(25))

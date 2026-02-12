@@ -34,7 +34,7 @@ async def trial_button(call: CallbackQuery):
             expiry_date = (datetime.now() + timedelta(days=3)).date()
             # Если пользователя нет, активируем пробный период и сохраняем данные
             new_trial_user = TestPeriod(tg_id=call.from_user.id,
-                                        username=call.from_user.username,
+                                        username=call.from_user.username or "unknown",
                                         file_name=client_name,
                                         subscription='trial',
                                         expiry_date=expiry_date,

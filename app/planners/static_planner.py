@@ -23,7 +23,7 @@ async def update_static(bot: Bot):
                 # Если пользователя нет в Static, добавляем его
                 new_static_user = Static(
                     tg_id=user.tg_id,
-                    username=user.username,
+                    username=user.username or "unknown",
                     use_trial=user.use_trial,  # Взято из таблицы User
                     use_subs=user.use_subs # Взято из таблицы User
                 )

@@ -192,13 +192,13 @@ async def handle_successful_payment(message: Message):
 
     async with async_session() as session:
         tg_id = message.from_user.id
-        username = message.from_user.username
+        username = message.from_user.username or "unknown"
         price = message.successful_payment.total_amount / 100
         provider_payment_charge_id = message.successful_payment.provider_payment_charge_id
 
         new_payment = Payments(
             tg_id=tg_id,
-            username=username,
+            username=username or "unknown",
             price=price,
             date=datetime.now(),
             tarific_plan=base_payload,
@@ -212,7 +212,7 @@ async def handle_successful_payment(message: Message):
 
         new_subscriber = Subscribers(
             tg_id=tg_id,
-            username=username,
+            username=username or "unknown",
             file_name='check',  # временно
             subscription=base_payload,
             expiry_date=expiry_date,
