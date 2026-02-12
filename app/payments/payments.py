@@ -10,7 +10,8 @@ from datetime import datetime, timedelta
 from sqlalchemy import select, delete, update
 
 import config
-from app.database.models import async_session, Static, Subscribers, Payments, User
+from config import one_mounth_price, six_mounth_price, twelve_mounth_price
+from app.database.models import async_session, Subscribers, Payments, User
 
 from app.addons.utilits import calculate_expiry_date, check_available_clients_count, generate_client_name
 from app.wg_api.wg_api import add_client_wg, get_config_wg
@@ -27,7 +28,7 @@ async def create_invoice(call: CallbackQuery):
                 "description": "Подписка на 1 месяц",
                 "quantity": "1.00",
                 "amount": {
-                    "value": "199.00",
+                    f"value": f"{one_mounth_price}.00",
                     "currency": "RUB"
                 },
                 "vat_code": 1
@@ -35,7 +36,7 @@ async def create_invoice(call: CallbackQuery):
         }
     }
     await call.bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
-    prices = [LabeledPrice(label='Подписка на 1 месяц', amount=199 * 100)]  # Сумма в копейках
+    prices = [LabeledPrice(label='Подписка на 1 месяц', amount=one_mounth_price * 100)]  # Сумма в копейках
     await call.bot.send_invoice(
         chat_id=call.from_user.id,
         title="Доступ к VPN на 1 мес.",
@@ -60,7 +61,7 @@ async def create_invoice(call: CallbackQuery):
                 "description": "Подписка на 6 месяцев",
                 "quantity": "1.00",
                 "amount": {
-                    "value": "999.00",
+                    "value": f"{six_mounth_price}.00",
                     "currency": "RUB"
                 },
                 "vat_code": 1
@@ -68,7 +69,7 @@ async def create_invoice(call: CallbackQuery):
         }
     }
     await call.bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
-    prices = [LabeledPrice(label='Подписка на 6 месяцев', amount=999 * 100)]  # Сумма в копейках
+    prices = [LabeledPrice(label='Подписка на 6 месяцев', amount=six_mounth_price * 100)]  # Сумма в копейках
     await call.bot.send_invoice(
         chat_id=call.from_user.id,
         title="Доступ к VPN на 6 мес.",
@@ -92,7 +93,7 @@ async def create_invoice(call: CallbackQuery):
                 "description": "Подписка на 12 месяцев",
                 "quantity": "1.00",
                 "amount": {
-                    "value": "1799.00",
+                    "value": f"{twelve_mounth_price}.00",
                     "currency": "RUB"
                 },
                 "vat_code": 1
@@ -100,7 +101,7 @@ async def create_invoice(call: CallbackQuery):
         }
     }
     await call.bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
-    prices = [LabeledPrice(label='Подписка на 12 месяцев', amount=1799 * 100)]  # Сумма в копейках
+    prices = [LabeledPrice(label='Подписка на 12 месяцев', amount=twelve_mounth_price * 100)]  # Сумма в копейках
     await call.bot.send_invoice(
         chat_id=call.from_user.id,
         title="Доступ к VPN на 12 мес.",

@@ -69,14 +69,6 @@ class Server(Base):
     date = mapped_column(String(25))
     is_active = mapped_column(Boolean, default=True)
 
-class Price(Base):
-    __tablename__ = 'prices'
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name = mapped_column(String(25))
-    duration_day = mapped_column(BigInteger)
-    price = mapped_column(BigInteger)
-
 async def async_main():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

@@ -10,7 +10,7 @@ import app.users.keyboard as kb
 import app.admin.admin_keyboard as admin_kb
 import app.database.requests as rq
 from app.database.models import TestPeriod, Subscribers, async_session
-from config import ADMIN_ID
+from config import ADMIN_ID, one_mounth_fake_price, one_mounth_price, six_mounth_price, six_mounth_fake_price, twelve_mounth_price, twelve_mounth_fake_price
 
 router = Router()
 
@@ -86,7 +86,12 @@ async def check_subscribe_button(message: Message):
 @router.message(F.text == 'Купить 💳')
 async def help_main_button(message: Message):
     photo = FSInputFile("app/Pictures/WireGuard_ logo.jpeg")
-    await message.answer_photo(photo, caption=texts_for_bot["wireguard_photo_message"],parse_mode='HTML',
+    await message.answer_photo(photo,
+                               caption="🛡️ <b>Wireguard VPN</b>\n\n"
+                                       f"📅 <b>1 мес.</b> — <s>{one_mounth_fake_price} руб.</s>   <b>{one_mounth_price} руб.</b>\n"
+                                       f"📅 <b>6 мес.</b> — <s>{six_mounth_fake_price} руб.</s>   <b>{six_mounth_price} руб.</b>\n"
+                                       f"📅 <b>12 мес.</b> — <s>{twelve_mounth_fake_price} руб.</s>   <b>{twelve_mounth_price} руб.</b>",
+                               parse_mode='HTML',
                                reply_markup=kb.buy_kb)
 
 
@@ -113,9 +118,3 @@ async def help_main_button(message: Message):
 @router.message(F.text == 'Скачал✅')
 async def help_main_button(message: Message):
     await message.answer(texts_for_bot['download_message'], reply_markup=kb.download_kb)
-
-# @router.message()
-# async def default_answer(message: Message):
-#     await message.answer('Я тебя не понимаю')
-
-
