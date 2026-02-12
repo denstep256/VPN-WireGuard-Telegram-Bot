@@ -42,6 +42,8 @@ class Subscribers(Base):
     file_name: Mapped[str] = mapped_column(String(25))
     subscription: Mapped[str] = mapped_column(String(25))
     expiry_date: Mapped[str] = mapped_column(String(25))
+    server_region: Mapped[str] = mapped_column(String(25))
+    server_region_id: Mapped[int] = mapped_column()
     notif_oneday = mapped_column(Boolean, default=False)
     #note нужно для ручного добавления подписки
     note: Mapped[str | None] = mapped_column(String, nullable=True, default="")

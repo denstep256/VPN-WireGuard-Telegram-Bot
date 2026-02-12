@@ -1,13 +1,17 @@
 import json
 from datetime import datetime
 
-from aiogram.types import Message, FSInputFile, CallbackQuery, InputMediaPhoto
+from aiogram.types import Message, FSInputFile, CallbackQuery, InputMediaPhoto, InlineKeyboardMarkup, \
+    InlineKeyboardButton
 from aiogram.filters import CommandStart
 from aiogram import Router, F
 from sqlalchemy import select
+
+from app.addons.utilits import get_active_subscriptions
 from app.database.models import async_session
 
 import app.users.keyboard as kb
+from app.users.keyboard import get_subscriptions_kb, get_renewal_tariff_kb
 import app.admin.admin_keyboard as admin_kb
 import app.database.requests as rq
 from app.database.models import TestPeriod, Subscribers, async_session, engine, Server, async_main
@@ -128,26 +132,34 @@ async def handle_server_selection(callback: CallbackQuery):
     )
 
     photo = FSInputFile("app/Pictures/WireGuard_ logo.jpeg")
-    # Редактируем текущее сообщение: сначала медиа, потом подпись
     await callback.message.edit_media(
         media=InputMediaPhoto(media=photo),
-        reply_markup=kb.buy_kb
+        reply_markup=kb.get_buy_kb(server.region, server.region_id)
     )
     await callback.message.edit_caption(
         caption=caption_text,
         parse_mode="HTML",
-        reply_markup=kb.buy_kb
+        reply_markup=kb.get_buy_kb(server.region, server.region_id)
     )
 
     await callback.answer()
 
-@router.message(F.text == 'Купить 💳')
+@router.message(F.text == 'Купить новую')
 async def help_main_button(message: Message):
     async with async_session() as session:
         keyboard = await kb.get_servers_keyboard(session)
         await message.answer(
             "<b>Выберите сервер</b>",
             reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
+@router.message(F.text == 'Купить 💳')
+async def help_main_button(message: Message):
+    async with async_session() as session:
+        await message.answer(
+            "<b>Выберите:</b>",
+            reply_markup=kb.choose_kb,
             parse_mode="HTML"
         )
 

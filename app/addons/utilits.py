@@ -3,7 +3,9 @@ import os
 
 from datetime import timedelta, datetime
 import random
+from select import select
 
+from app.database.models import async_session, Subscribers
 from app.wg_api.wg_api import get_client_count_wg
 
 
@@ -66,3 +68,15 @@ def determine_subscription_type(days):
         return "less_annual"
     else:
         return "more_annual"
+
+
+async def get_active_subscriptions(tg_id: int):
+    today = datetime.now().date().isoformat()
+    async with async_session() as session:
+        result = await session.execute(
+            select(Subscribers).where(
+                Subscribers.tg_id == tg_id,
+                Subscribers.expiry_date >= today
+            )
+        )
+        return result.scalars().all()

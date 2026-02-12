@@ -20,8 +20,21 @@ pay_router = Router()
 
 
 
-@pay_router.callback_query(F.data.startswith('one_month'))
-async def create_invoice(call: CallbackQuery):
+@pay_router.callback_query(F.data.startswith('one_month|'))
+async def create_invoice_one_month(call: CallbackQuery):
+    parts = call.data.split("|")
+    if len(parts) < 3:
+        await call.answer("❌ Ошибка данных.", show_alert=True)
+        return
+
+    plan, region, region_id_str = parts[0], parts[1], parts[2]
+    if not region_id_str.isdigit():
+        await call.answer("⚠️ Некорректный ID сервера.", show_alert=True)
+        return
+    region_id = int(region_id_str)
+
+    payload = f"monthly_subs|{region}|{region_id}"
+
     PROVIDER_DATA_WO_EMAIL_MONTH = {
         "receipt": {
             "items": [{
@@ -41,7 +54,7 @@ async def create_invoice(call: CallbackQuery):
         chat_id=call.from_user.id,
         title="Доступ к VPN на 1 мес.",
         description='Оплата картой в Telegram 💳. В поле электронная почта укажите СВОЮ почту, на неё придет ваш чек об оплате.',
-        payload="monthly_subs",
+        payload=payload,
         provider_token=config.PAYMENT_TOKEN,
         currency="RUB",
         prices=prices,
@@ -53,8 +66,21 @@ async def create_invoice(call: CallbackQuery):
 
 
 
-@pay_router.callback_query(F.data.startswith('six_month'))
+@pay_router.callback_query(F.data.startswith('six_month|'))
 async def create_invoice(call: CallbackQuery):
+    parts = call.data.split("|")
+    if len(parts) < 3:
+        await call.answer("❌ Ошибка данных.", show_alert=True)
+        return
+
+    plan, region, region_id_str = parts[0], parts[1], parts[2]
+    if not region_id_str.isdigit():
+        await call.answer("⚠️ Некорректный ID сервера.", show_alert=True)
+        return
+    region_id = int(region_id_str)
+
+    payload = f"semi_annual_subs|{region}|{region_id}"
+
     PROVIDER_DATA_WO_EMAIL_SEMI = {
         "receipt": {
             "items": [{
@@ -74,7 +100,7 @@ async def create_invoice(call: CallbackQuery):
         chat_id=call.from_user.id,
         title="Доступ к VPN на 6 мес.",
         description='Оплата картой в Telegram 💳. В поле электронная почта укажите СВОЮ почту, на неё придет ваш чек об оплате.',
-        payload="semi_annual_subs",
+        payload=payload,
         provider_token=config.PAYMENT_TOKEN,
         currency="RUB",
         prices=prices,
@@ -85,8 +111,21 @@ async def create_invoice(call: CallbackQuery):
     )
 
 
-@pay_router.callback_query(F.data.startswith('twelve_month'))
+@pay_router.callback_query(F.data.startswith('twelve_month|'))
 async def create_invoice(call: CallbackQuery):
+    parts = call.data.split("|")
+    if len(parts) < 3:
+        await call.answer("❌ Ошибка данных.", show_alert=True)
+        return
+
+    plan, region, region_id_str = parts[0], parts[1], parts[2]
+    if not region_id_str.isdigit():
+        await call.answer("⚠️ Некорректный ID сервера.", show_alert=True)
+        return
+    region_id = int(region_id_str)
+
+    payload = f"annual_subs|{region}|{region_id}"
+
     PROVIDER_DATA_WO_EMAIL_ANNUAL = {
         "receipt": {
             "items": [{
@@ -106,7 +145,7 @@ async def create_invoice(call: CallbackQuery):
         chat_id=call.from_user.id,
         title="Доступ к VPN на 12 мес.",
         description='Оплата картой в Telegram 💳. В поле электронная почта укажите СВОЮ почту, на неё придет ваш чек об оплате.',
-        payload="annual_subs",
+        payload=payload,
         provider_token=config.PAYMENT_TOKEN,
         currency="RUB",
         prices=prices,
@@ -120,15 +159,6 @@ async def create_invoice(call: CallbackQuery):
 @pay_router.pre_checkout_query()
 async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: Bot):
     async with async_session() as session:
-        # Проверка, есть ли пользователь в базе данных Subscribers
-        user_in_subscribers = await session.scalar(
-            select(Subscribers).where(Subscribers.tg_id == pre_checkout_query.from_user.id)
-        )
-
-    if user_in_subscribers:
-        # Если пользователь уже есть в таблице Subscribers, разрешить оплату
-        await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
-    else:
         # Если пользователя нет в базе данных, проверяем доступные файлы
         is_available = await check_available_clients_count()
 
@@ -143,19 +173,30 @@ async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: 
 
 @pay_router.message(F.successful_payment)
 async def handle_successful_payment(message: Message):
+    payload = message.successful_payment.invoice_payload
+    parts = payload.split("|")
+
+    if len(parts) >= 3:
+        base_payload, region, region_id_str = parts[0], parts[1], parts[2]
+        region_id = int(region_id_str)
+    else:
+        # Старый формат (без сервера) — можно обработать как ошибку или использовать default
+        base_payload = payload
+        region = None
+        region_id = None
+
     async with async_session() as session:
         tg_id = message.from_user.id
         username = message.from_user.username
-        payload = message.successful_payment.invoice_payload
-        summa = message.successful_payment.total_amount / 100
+        price = message.successful_payment.total_amount / 100
         provider_payment_charge_id = message.successful_payment.provider_payment_charge_id
 
         new_payment = Payments(
             tg_id=tg_id,
             username=username,
-            summa=summa,
-            time_to_add=datetime.now(),
-            payload=payload,
+            price=price,
+            date=datetime.now(),
+            tarific_plan=base_payload,
             provider_payment_charge_id=provider_payment_charge_id
         )
         session.add(new_payment)

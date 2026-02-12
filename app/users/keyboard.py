@@ -4,8 +4,19 @@ from sqlalchemy import select
 
 from sqlalchemy.orm import Session
 
-from app.database.models import Server
+from app.database.models import Server, Subscribers
 
+
+def get_subscriptions_kb(subs: list[Subscribers]) -> InlineKeyboardMarkup:
+    buttons = []
+    for sub in subs:
+        # Например: "Amsterdam №1 — до 2025-08-15"
+        text = f"{sub.server_region} №{sub.server_region_id} — до {sub.expiry_date}"
+        callback_data = f"renew_sub|{sub.id}"  # используем ID записи
+        buttons.append([InlineKeyboardButton(text=text, callback_data=callback_data)])
+
+    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 async def get_servers_keyboard(session: Session) -> InlineKeyboardMarkup:
     # Получаем активные серверы из БД
@@ -48,24 +59,25 @@ help_kb = InlineKeyboardMarkup(inline_keyboard=[
                           url="https://t.me/ZenithVPN_support",
                           callback_data='help_button')]])
 
-buy_kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text='Подписка на 1 месяц',
-                          callback_data=f'one_month')],
-    [InlineKeyboardButton(text='Подписка на 6 месяцев',
-                          callback_data=f'six_month')],
-    [InlineKeyboardButton(text='Подписка на 12 месяцев',
-                          callback_data=f'twelve_month')],
-    [InlineKeyboardButton(text='Пробная подписка на 3 дня',
-                          callback_data=f'test_3_days')]])
-pre_buy_kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text='Подписка на 1 месяц',
-                          callback_data=f'one_month')],
-    [InlineKeyboardButton(text='Подписка на 6 месяцев',
-                          callback_data=f'six_month')],
-    [InlineKeyboardButton(text='Подписка на 12 месяцев',
-                          callback_data=f'twelve_month')],
-    [InlineKeyboardButton(text='Пробная подписка на 3 дня',
-                          callback_data=f'test_3_days')]])
+def get_buy_kb(region: str, region_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text='Подписка на 1 месяц',
+            callback_data=f'one_month|{region}|{region_id}'
+        )],
+        [InlineKeyboardButton(
+            text='Подписка на 6 месяцев',
+            callback_data=f'six_month|{region}|{region_id}'
+        )],
+        [InlineKeyboardButton(
+            text='Подписка на 12 месяцев',
+            callback_data=f'twelve_month|{region}|{region_id}'
+        )],
+        [InlineKeyboardButton(
+            text='Пробная подписка на 3 дня',
+            callback_data=f'test_3_days|{region}|{region_id}'
+        )]
+    ])
 
 confirm_order_kb = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text='Написать',
@@ -99,4 +111,25 @@ download_kb = InlineKeyboardMarkup(inline_keyboard=[
                           url='https://2ip.ru',
                           callback_data='check_bt')]])
 
+choose_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='Продлить текущую подписку')],
+                                                  [KeyboardButton(text='Купить новую')],
+                                                  [KeyboardButton(text='Назад ↩️')]],
+                             resize_keyboard=True)
 
+# keyboards.py
+def get_renewal_tariff_kb(region: str, region_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text='➕ 1 месяц',
+            callback_data=f'renew_one_month|{region}|{region_id}'
+        )],
+        [InlineKeyboardButton(
+            text='➕ 6 месяцев',
+            callback_data=f'renew_six_month|{region}|{region_id}'
+        )],
+        [InlineKeyboardButton(
+            text='➕ 12 месяцев',
+            callback_data=f'renew_twelve_month|{region}|{region_id}'
+        )],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]
+    ])
