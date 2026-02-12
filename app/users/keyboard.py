@@ -1,6 +1,44 @@
 from aiogram.types import (ReplyKeyboardMarkup, KeyboardButton,
                            InlineKeyboardMarkup, InlineKeyboardButton)
+from sqlalchemy import select
 
+from sqlalchemy.orm import Session
+
+from app.database.models import Server
+
+
+async def get_servers_keyboard(session: Session) -> InlineKeyboardMarkup:
+    # Получаем активные серверы из БД
+    result = await session.execute(
+        select(Server).where(Server.is_active == True).order_by(Server.region)
+    )
+    servers = result.scalars().all()
+
+    # Формируем кнопки
+    buttons = []
+    for server in servers:
+        button_text = f"{server.region} №{server.region_id}"
+        buttons.append([
+            InlineKeyboardButton(
+                text=button_text,
+                callback_data=f'{server.region}-{server.region_id}'
+            )
+        ])
+
+    # Если серверов нет — показываем уведомление
+    if not buttons:
+        buttons.append([
+            InlineKeyboardButton(
+                text="⚠️ Нет доступных серверов",
+                callback_data='no_servers'
+            )
+        ])
+
+    # Добавляем кнопку отмены/назад внизу
+    buttons.append([
+        InlineKeyboardButton(text="← Назад", callback_data='back_to_menu')
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 main = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='Купить 💳')],
                                      [KeyboardButton(text='Проверить подписку ✅')],
@@ -16,6 +54,15 @@ help_kb = InlineKeyboardMarkup(inline_keyboard=[
                           callback_data='help_button')]])
 
 buy_kb = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text='Подписка на 1 месяц',
+                          callback_data=f'one_month')],
+    [InlineKeyboardButton(text='Подписка на 6 месяцев',
+                          callback_data=f'six_month')],
+    [InlineKeyboardButton(text='Подписка на 12 месяцев',
+                          callback_data=f'twelve_month')],
+    [InlineKeyboardButton(text='Пробная подписка на 3 дня',
+                          callback_data=f'test_3_days')]])
+pre_buy_kb = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text='Подписка на 1 месяц',
                           callback_data=f'one_month')],
     [InlineKeyboardButton(text='Подписка на 6 месяцев',

@@ -14,7 +14,7 @@ async def set_user_start(tg_id, username, first_name, date_add):
                 tg_id=tg_id,
                 username=username,
                 first_name=first_name,
-                date_add=date_add,
+                date=date_add,
             )
             session.add(new_user)
             await session.commit()

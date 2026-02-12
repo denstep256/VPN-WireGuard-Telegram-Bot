@@ -4,7 +4,7 @@ from aiogram import Bot
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
-from app.database.models import async_session, User, Static
+from app.database.models import async_session, User
 
 async def update_static(bot: Bot):
     async with async_session() as session:

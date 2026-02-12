@@ -4,7 +4,7 @@ from aiogram.types import CallbackQuery, FSInputFile
 from aiogram import Router, F
 from datetime import datetime, timedelta
 
-from app.database.models import async_session, Static
+from app.database.models import async_session
 from app.database.models import TestPeriod, User
 from sqlalchemy import select, exists, delete
 

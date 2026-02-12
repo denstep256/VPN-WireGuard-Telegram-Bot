@@ -62,9 +62,9 @@ class Server(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     region = mapped_column(String(25))
-    region_id = mapped_column(BigInteger)
-    host_ip = mapped_column(BigInteger)
-    port = mapped_column(BigInteger)
+    region_id: Mapped[int] = mapped_column()
+    host_ip = mapped_column(String(25))
+    port = mapped_column(String(25))
     password = mapped_column(String(25))
     date = mapped_column(String(25))
     is_active = mapped_column(Boolean, default=True)

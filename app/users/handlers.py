@@ -1,15 +1,16 @@
 import json
 from datetime import datetime
 
-from aiogram.types import Message, FSInputFile
+from aiogram.types import Message, FSInputFile, CallbackQuery
 from aiogram.filters import CommandStart
 from aiogram import Router, F
 from sqlalchemy import select
+from app.database.models import async_session
 
 import app.users.keyboard as kb
 import app.admin.admin_keyboard as admin_kb
 import app.database.requests as rq
-from app.database.models import TestPeriod, Subscribers, async_session
+from app.database.models import TestPeriod, Subscribers, async_session, engine, Server, async_main
 from config import ADMIN_ID, one_mounth_fake_price, one_mounth_price, six_mounth_price, six_mounth_fake_price, twelve_mounth_price, twelve_mounth_fake_price
 
 router = Router()
@@ -83,22 +84,74 @@ async def check_subscribe_button(message: Message):
         # Если пользователя нет ни в одной из таблиц
         await message.answer(texts_for_bot["not_active_subs"], parse_mode='HTML')
 
+
+@router.callback_query(F.data.contains("-"))  # или F.data.regexp(r"^[^-]+-\d+$")
+async def handle_server_selection(callback: CallbackQuery):
+    data = callback.data
+
+    # Разделяем по первому дефису (на случай, если region содержит дефисы)
+    parts = data.split("-", 1)
+    if len(parts) != 2:
+        await callback.answer("❌ Некорректный формат выбора сервера.", show_alert=True)
+        return
+
+    region, region_id_str = parts
+
+    if not region_id_str.isdigit():
+        await callback.answer("⚠️ Неверный ID региона.", show_alert=True)
+        return
+
+    region_id = int(region_id_str)
+
+    # Ищем сервер по region + region_id (и is_active=True)
+    async with async_session() as session:
+        server = session.query(Server).filter(
+            Server.region == region,
+            Server.region_id == region_id,
+            Server.is_active.is_(True)
+        ).first()
+
+        if not server:
+            await callback.answer("❌ Сервер не найден или недоступен.", show_alert=True)
+            return
+
+    # Формируем caption
+    caption_text = (
+        "🛡️ <b>Wireguard VPN</b>\n\n"
+        f"📍 <b>Сервер:</b> {server.region} ({server.host_ip}:{server.port})\n\n"
+        f"📅 <b>1 мес.</b> — <s>{one_mounth_fake_price} руб.</s>   <b>{one_mounth_price} руб.</b>\n"
+        f"📅 <b>6 мес.</b> — <s>{six_mounth_fake_price} руб.</s>   <b>{six_mounth_price} руб.</b>\n"
+        f"📅 <b>12 мес.</b> — <s>{twelve_mounth_fake_price} руб.</s>   <b>{twelve_mounth_price} руб.</b>"
+    )
+
+    photo = FSInputFile("app/Pictures/WireGuard_ logo.jpeg")
+
+    # Редактируем текущее сообщение: сначала медиа, потом подпись
+    await callback.message.edit_media(
+        media=photo,
+        reply_markup=kb.buy_kb
+    )
+    await callback.message.edit_caption(
+        caption=caption_text,
+        parse_mode="HTML"
+    )
+
+    await callback.answer()
+
 @router.message(F.text == 'Купить 💳')
 async def help_main_button(message: Message):
-    photo = FSInputFile("app/Pictures/WireGuard_ logo.jpeg")
-    await message.answer_photo(photo,
-                               caption="🛡️ <b>Wireguard VPN</b>\n\n"
-                                       f"📅 <b>1 мес.</b> — <s>{one_mounth_fake_price} руб.</s>   <b>{one_mounth_price} руб.</b>\n"
-                                       f"📅 <b>6 мес.</b> — <s>{six_mounth_fake_price} руб.</s>   <b>{six_mounth_price} руб.</b>\n"
-                                       f"📅 <b>12 мес.</b> — <s>{twelve_mounth_fake_price} руб.</s>   <b>{twelve_mounth_price} руб.</b>",
-                               parse_mode='HTML',
-                               reply_markup=kb.buy_kb)
-
+    async with async_session() as session:
+        keyboard = await kb.get_servers_keyboard(session)
+        await message.answer(
+            "🛡️ <b>Выберите сервер</b>",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
 
 @router.message(F.text == 'Назад ↩️')
 async def help_main_button(message: Message):
     if message.from_user.id == int(ADMIN_ID):
-        await message.answer('Вы вернулись в главное меню (Админ)', reply_markup=admin_kb.main_admin)
+        await message.answer('Вы вернулись в главное меню', reply_markup=admin_kb.main_admin)
     else:
         await message.answer('Вы вернулись в главное меню', reply_markup=kb.main)
 
