@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 
-from aiogram.types import Message, FSInputFile, CallbackQuery
+from aiogram.types import Message, FSInputFile, CallbackQuery, InputMediaPhoto
 from aiogram.filters import CommandStart
 from aiogram import Router, F
 from sqlalchemy import select
@@ -105,11 +105,14 @@ async def handle_server_selection(callback: CallbackQuery):
 
     # Ищем сервер по region + region_id (и is_active=True)
     async with async_session() as session:
-        server = session.query(Server).filter(
-            Server.region == region,
-            Server.region_id == region_id,
-            Server.is_active.is_(True)
-        ).first()
+        result = await session.execute(
+            select(Server).where(
+                Server.region == region,
+                Server.region_id == region_id,
+                Server.is_active == True
+            )
+        )
+        server = result.scalar_one_or_none()  # аналог .first()
 
         if not server:
             await callback.answer("❌ Сервер не найден или недоступен.", show_alert=True)
@@ -118,22 +121,22 @@ async def handle_server_selection(callback: CallbackQuery):
     # Формируем caption
     caption_text = (
         "🛡️ <b>Wireguard VPN</b>\n\n"
-        f"📍 <b>Сервер:</b> {server.region} ({server.host_ip}:{server.port})\n\n"
+        f"📍 <b>Сервер:</b> {server.region} №{server.region_id}\n\n"
         f"📅 <b>1 мес.</b> — <s>{one_mounth_fake_price} руб.</s>   <b>{one_mounth_price} руб.</b>\n"
         f"📅 <b>6 мес.</b> — <s>{six_mounth_fake_price} руб.</s>   <b>{six_mounth_price} руб.</b>\n"
         f"📅 <b>12 мес.</b> — <s>{twelve_mounth_fake_price} руб.</s>   <b>{twelve_mounth_price} руб.</b>"
     )
 
     photo = FSInputFile("app/Pictures/WireGuard_ logo.jpeg")
-
     # Редактируем текущее сообщение: сначала медиа, потом подпись
     await callback.message.edit_media(
-        media=photo,
+        media=InputMediaPhoto(media=photo),
         reply_markup=kb.buy_kb
     )
     await callback.message.edit_caption(
         caption=caption_text,
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=kb.buy_kb
     )
 
     await callback.answer()
@@ -143,7 +146,7 @@ async def help_main_button(message: Message):
     async with async_session() as session:
         keyboard = await kb.get_servers_keyboard(session)
         await message.answer(
-            "🛡️ <b>Выберите сервер</b>",
+            "<b>Выберите сервер</b>",
             reply_markup=keyboard,
             parse_mode="HTML"
         )

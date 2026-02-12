@@ -33,11 +33,6 @@ async def get_servers_keyboard(session: Session) -> InlineKeyboardMarkup:
                 callback_data='no_servers'
             )
         ])
-
-    # Добавляем кнопку отмены/назад внизу
-    buttons.append([
-        InlineKeyboardButton(text="← Назад", callback_data='back_to_menu')
-    ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 main = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='Купить 💳')],
