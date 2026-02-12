@@ -1,13 +1,9 @@
 import aiohttp
 import os
 from wg_easy_api_wrapper.server import Server
-from wg_easy_api_wrapper.errors import AlreadyLoggedInError
 from config import WG_API, WG_ADDRESS
 
-async def add_client_wg(client_name: str):
-    url = WG_ADDRESS
-    password = WG_API
-
+async def add_client_wg(client_name: str, url, password):
     async with aiohttp.ClientSession() as session:
         server = Server(url, password, session)
 
@@ -18,10 +14,7 @@ async def add_client_wg(client_name: str):
         await add_client(server, client_name)
 
 
-async def get_config_wg(client_name: str):
-    url = WG_ADDRESS
-    password = WG_API
-
+async def get_config_wg(client_name: str, url, password):
     async with aiohttp.ClientSession() as session:
         server = Server(url, password, session)
 
@@ -45,10 +38,7 @@ async def remove_client_wg(client_name: str):
         # Удаление клиента
         await remove_client_by_name(server, client_name)
 
-async def get_client_count_wg():
-    url = WG_ADDRESS
-    password = WG_API
-
+async def get_client_count_wg(url, password):
     async with aiohttp.ClientSession() as session:
         server = Server(url, password, session)
 

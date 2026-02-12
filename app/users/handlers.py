@@ -1,17 +1,12 @@
 import json
 from datetime import datetime
 
-from aiogram.types import Message, FSInputFile, CallbackQuery, InputMediaPhoto, InlineKeyboardMarkup, \
-    InlineKeyboardButton
+from aiogram.types import Message, FSInputFile, CallbackQuery, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart
-from aiogram import Router, F
 from sqlalchemy import select
-
-from app.addons.utilits import get_active_subscriptions
-from app.database.models import async_session
+from aiogram import Router, F
 
 import app.users.keyboard as kb
-from app.users.keyboard import get_subscriptions_kb, get_renewal_tariff_kb
 import app.admin.admin_keyboard as admin_kb
 import app.database.requests as rq
 from app.database.models import TestPeriod, Subscribers, async_session, engine, Server, async_main
@@ -44,52 +39,50 @@ async def help_main_button(message: Message):
 
 @router.message(F.text == 'Проверить подписку ✅')
 async def check_subscribe_button(message: Message):
+    tg_id = message.from_user.id
 
     async with async_session() as session:
-        tg_id = message.from_user.id
-        # Проверяем пользователя в таблице Subscribers
-        subscriber = await session.scalar(
+        subs_result = await session.execute(
             select(Subscribers).where(Subscribers.tg_id == tg_id)
         )
+        subscribers = subs_result.scalars().all()
 
-        if subscriber:
-            # Форматируем дату окончания подписки
-            expiry_date = subscriber.expiry_date
-            await message.answer(f"✅ Ваша подписка активна до {expiry_date}.", parse_mode='HTML')
-
-            query = select(Subscribers.file_name).filter_by(tg_id=tg_id)
-            result = await session.execute(query)
-            file_name = result.scalar_one_or_none()  # Получаем одно значение или None, если не найдено
-
-            file_path = f"app/auth/{file_name}.conf"  # Укажи правильный путь к файлу
-            document = FSInputFile(file_path)
-            await message.answer_document(document)
-            return
-
-        # Если пользователя нет в Subscribers, проверяем в TestPeriod
-        test_period_user = await session.scalar(
+        test_result = await session.execute(
             select(TestPeriod).where(TestPeriod.tg_id == tg_id)
         )
+        test_subs = test_result.scalars().all()
 
-        if test_period_user:
-            # Форматируем дату окончания пробного периода
-            expiry_date = test_period_user.expiry_date
-            await message.answer(f"✅ Ваша пробная подписка активна до {expiry_date}.", parse_mode='HTML')
-
-            query = select(TestPeriod.file_name).filter_by(tg_id=tg_id)
-            result = await session.execute(query)
-            file_name = result.scalar_one_or_none()  # Получаем одно значение или None, если не найдено
-
-            file_path = f"app/auth/{file_name}.conf"  # Укажи правильный путь к файлу
-            document = FSInputFile(file_path)
-            await message.answer_document(document)
-            return
-
-        # Если пользователя нет ни в одной из таблиц
+    if not subscribers and not test_subs:
         await message.answer(texts_for_bot["not_active_subs"], parse_mode='HTML')
+        return
 
+    # Формируем кнопки
+    buttons = []
 
-@router.callback_query(F.data.contains("-"))  # или F.data.regexp(r"^[^-]+-\d+$")
+    # Подписки из Subscribers
+    for sub in subscribers:
+        text = f"🔒 {sub.server_region} №{sub.server_region_id} — до {sub.expiry_date}"
+        callback_data = f"renew_sub|{sub.server_region}|{sub.server_region_id}"
+        buttons.append([InlineKeyboardButton(text=text, callback_data=callback_data)])
+
+    # Пробные подписки
+    for test in test_subs:
+        text = f"Пробная подписка активна до {test.expiry_date}"
+        # Используем уникальный префикс, чтобы отличать
+        callback_data = "no_renew_test"
+        buttons.append([InlineKeyboardButton(text=text, callback_data=callback_data)])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    await message.answer("Ваши подписки:", reply_markup=keyboard, parse_mode='HTML')
+
+@router.callback_query(F.data == "no_renew_test")
+async def handle_test_sub_click(call: CallbackQuery):
+    await call.answer(
+        "❌ Пробную подписку нельзя продлить.",
+        show_alert=True
+    )
+
+@router.callback_query(F.data.contains("-"))
 async def handle_server_selection(callback: CallbackQuery):
     data = callback.data
 
@@ -144,22 +137,13 @@ async def handle_server_selection(callback: CallbackQuery):
 
     await callback.answer()
 
-@router.message(F.text == 'Купить новую')
+@router.message(F.text == 'Купить 💳')
 async def help_main_button(message: Message):
     async with async_session() as session:
         keyboard = await kb.get_servers_keyboard(session)
         await message.answer(
             "<b>Выберите сервер</b>",
             reply_markup=keyboard,
-            parse_mode="HTML"
-        )
-
-@router.message(F.text == 'Купить 💳')
-async def help_main_button(message: Message):
-    async with async_session() as session:
-        await message.answer(
-            "<b>Выберите:</b>",
-            reply_markup=kb.choose_kb,
             parse_mode="HTML"
         )
 

@@ -20,7 +20,6 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(25))
     first_name: Mapped[str] = mapped_column(String(25))
     date: Mapped[str] = mapped_column(String(25))
-    is_buy_subs = mapped_column(Boolean, default=False)
 
 class Payments(Base):
     __tablename__ = 'payments'

@@ -110,26 +110,3 @@ download_kb = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text='Проверить VPN',
                           url='https://2ip.ru',
                           callback_data='check_bt')]])
-
-choose_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='Продлить текущую подписку')],
-                                                  [KeyboardButton(text='Купить новую')],
-                                                  [KeyboardButton(text='Назад ↩️')]],
-                             resize_keyboard=True)
-
-# keyboards.py
-def get_renewal_tariff_kb(region: str, region_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text='➕ 1 месяц',
-            callback_data=f'renew_one_month|{region}|{region_id}'
-        )],
-        [InlineKeyboardButton(
-            text='➕ 6 месяцев',
-            callback_data=f'renew_six_month|{region}|{region_id}'
-        )],
-        [InlineKeyboardButton(
-            text='➕ 12 месяцев',
-            callback_data=f'renew_twelve_month|{region}|{region_id}'
-        )],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]
-    ])

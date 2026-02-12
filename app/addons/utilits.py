@@ -3,9 +3,9 @@ import os
 
 from datetime import timedelta, datetime
 import random
-from select import select
+from sqlalchemy import select
 
-from app.database.models import async_session, Subscribers
+from app.database.models import async_session, Subscribers, Server
 from app.wg_api.wg_api import get_client_count_wg
 
 
@@ -27,13 +27,31 @@ def generate_client_name() -> str:
             generated_usernames.add(client_name)  # Сохранение уникального имени
             return client_name
 
-async def check_available_clients_count() -> bool:
-    count = await get_client_count_wg()
-    # Проверка количества клиентов
-    if count < 253:
-        return True
-    else:
-        return False
+async def check_available_clients_count(region: str = None, region_id: int = None) -> bool:
+    async with async_session() as session:
+        result = await session.execute(
+            select(Server).where(
+                Server.region == region,
+                Server.region_id == region_id,
+                Server.is_active == True
+            )
+        )
+        server = result.scalar_one_or_none()
+
+        if not server:
+            return False  # Сервер не найден → слоты недоступны
+
+        # Получаем параметры (если понадобятся позже, например для логгирования или ограничений)
+        host = server.host_ip
+        port = server.port
+        ip = f"http://{host}:{port}"
+        password = server.password
+        count = await get_client_count_wg(ip, password)
+
+        if count < 60:
+            return True
+        else:
+            return False
 
 def delete_file_by_name(client_name: str):
     file_path = f"app/auth/{client_name}.conf"
