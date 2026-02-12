@@ -78,18 +78,3 @@ async def check_trial_period(tg_id):
         else:
             # Сообщение об успешной активации пробного периода
             return texts_for_bot.get("TRIAL_ACTIVATED"), True
-
-
-async def check_and_delete_user_in_static(tg_id: int):
-    async with async_session() as session:
-        # Запрос к таблице Static для проверки пользователя по tg_id и use_trial == False
-        query = select(Static).where(Static.tg_id == tg_id, Static.use_trial == False)
-        result = await session.execute(query)
-        user_in_static = result.scalar_one_or_none()
-
-        # Если пользователь найден и use_trial == False
-        if user_in_static:
-            # Удаление записи из таблицы Static
-            delete_query = delete(Static).where(Static.tg_id == tg_id)
-            await session.execute(delete_query)
-            await session.commit()  # Применение изменений
