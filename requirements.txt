@@ -27,3 +27,5 @@ typing_extensions==4.12.2
 tzlocal==5.2
 wg-easy-api-wrapper==1.0.8
 yarl==1.11.1
+
+python-dateutil~=2.9.0.post0

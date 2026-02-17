@@ -26,10 +26,7 @@ async def get_config_wg(client_name: str, url, password):
             print(config)
 
 
-async def remove_client_wg(client_name: str):
-    url = WG_ADDRESS
-    password = WG_API
-
+async def remove_client_wg(client_name: str, url, password):
     async with aiohttp.ClientSession() as session:
         server = Server(url, password, session)
 

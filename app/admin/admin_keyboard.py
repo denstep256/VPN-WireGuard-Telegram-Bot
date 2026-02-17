@@ -11,16 +11,16 @@ main_admin = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='Купить �
 
 admin_panel = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='Рассылка'),
                                              KeyboardButton(text='Статистика')],
-                                            [KeyboardButton(text='Выдать подписку'),
-                                             KeyboardButton(text='Убрать подписку')],
                                             [KeyboardButton(text='Добавить сервер')],
+                                            [KeyboardButton(text='Администрирование подписок ')],
                                             [KeyboardButton(text='Назад (Админ)')]],
                            resize_keyboard=True)
 
 stat_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='Клиенты на сервере'),
                                          KeyboardButton(text='Пользователи в боте')],
                                         [KeyboardButton(text='Пользователи с подпиской'),
-                                        KeyboardButton(text='Пользователи с пробным периодом')],
+                                         KeyboardButton(text='Пользователи с пробным периодом')],
+                                        [KeyboardButton(text='Платежы')],
                                         [KeyboardButton(text='Назад Админ')]],
                            resize_keyboard=True)
 
