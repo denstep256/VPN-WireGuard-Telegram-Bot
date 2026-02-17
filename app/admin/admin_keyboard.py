@@ -20,7 +20,7 @@ stat_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='Клиенты н�
                                          KeyboardButton(text='Пользователи в боте')],
                                         [KeyboardButton(text='Пользователи с подпиской'),
                                          KeyboardButton(text='Пользователи с пробным периодом')],
-                                        [KeyboardButton(text='Платежы')],
+                                        [KeyboardButton(text='Платежи')],
                                         [KeyboardButton(text='Назад Админ')]],
                            resize_keyboard=True)
 
