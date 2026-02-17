@@ -23,22 +23,17 @@ async def help_main_button(message: Message):
             parse_mode="HTML"
         )
 
-@user_buy_router.callback_query(F.data.contains("-"))
+@user_buy_router.callback_query(F.data.contains("srv|"))
 async def handle_server_selection(callback: CallbackQuery):
-    data = callback.data
-
-    # Разделяем по первому дефису (на случай, если region содержит дефисы)
-    parts = data.split("-", 1)
-    if len(parts) != 2:
+    parts = callback.data.split("|")
+    if len(parts) < 3:
         await callback.answer("❌ Некорректный формат выбора сервера.", show_alert=True)
         return
 
-    region, region_id_str = parts
-
+    region, region_id_str = parts[1], parts[2]
     if not region_id_str.isdigit():
         await callback.answer("⚠️ Неверный ID региона.", show_alert=True)
         return
-
     region_id = int(region_id_str)
 
     # Ищем сервер по region + region_id (и is_active=True)

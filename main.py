@@ -15,8 +15,6 @@ from app.payments.payments import pay_router
 from app.users.renew_handler import user_renew_router
 from app.users.trial import trial_router
 from app.admin.admin_commands_sender import admin_command_router
-from app.admin.admin_commands_add_subs import admin_command_add_subs_router
-from app.admin.admin_commands_delite_subs import admin_command_delite_subs_router
 from app.admin.admin_subs_manager import admin_subs_router
 
 from app.planners.static_planner import setup_scheduler_update_static
@@ -48,8 +46,6 @@ async def main():
     dp.include_router(trial_router)
     dp.include_router(admin_router)
     dp.include_router(admin_command_router)
-    dp.include_router(admin_command_add_subs_router)
-    dp.include_router(admin_command_delite_subs_router)
     dp.include_router(admin_command_add_server_router)
     dp.include_router(admin_subs_router)
     dp.include_router(admin_pinger_router)

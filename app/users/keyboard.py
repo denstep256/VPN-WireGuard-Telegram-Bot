@@ -33,7 +33,7 @@ async def get_servers_keyboard(session: Session) -> InlineKeyboardMarkup:
         buttons.append([
             InlineKeyboardButton(
                 text=button_text,
-                callback_data=f'{server.region}-{server.region_id}'
+                callback_data=f'srv|{server.region}|{server.region_id}'
             )
         ])
     # Если серверов нет — показываем уведомление
