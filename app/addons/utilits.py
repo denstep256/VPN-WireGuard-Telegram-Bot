@@ -1,7 +1,7 @@
 import os
 
 
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, date
 import random
 from sqlalchemy import select
 
@@ -98,3 +98,33 @@ async def get_active_subscriptions(tg_id: int):
             )
         )
         return result.scalars().all()
+
+def format_tariff(tariff_code: str) -> str:
+    tariff_map = {
+        "monthly_subs": "1 месяц",
+        "semi_annual_subs": "6 месяцев",
+        "annual_subs": "12 месяцев",
+    }
+    return tariff_map.get(tariff_code, tariff_code)  # если вдруг новый тариф — покажет как есть
+
+def add_months(d: date, months: int) -> date:
+    # простой безопасный add_months без внешних библиотек
+    year = d.year + (d.month - 1 + months) // 12
+    month = (d.month - 1 + months) % 12 + 1
+
+    # последний день месяца
+    if month == 12:
+        next_month = date(year + 1, 1, 1)
+    else:
+        next_month = date(year, month + 1, 1)
+    last_day = (next_month - timedelta(days=1)).day
+
+    day = min(d.day, last_day)
+    return date(year, month, day)
+
+
+PLAN_TO_MONTHS = {
+    "monthly_subs": 1,
+    "semi_annual_subs": 6,
+    "annual_subs": 12,
+}

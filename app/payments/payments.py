@@ -41,7 +41,7 @@ async def create_invoice_one_month(call: CallbackQuery):
                 "description": "Подписка на 1 месяц",
                 "quantity": "1.00",
                 "amount": {
-                    f"value": f"{one_mounth_price}.00",
+                    "value": f"{one_mounth_price}.00",
                     "currency": "RUB"
                 },
                 "vat_code": 1
@@ -187,6 +187,9 @@ async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: 
 async def handle_successful_payment(message: Message):
     payload = message.successful_payment.invoice_payload
     parts = payload.split("|")
+    if len(parts) < 3:
+        await message.answer("❌ Некорректный payload платежа.")
+        return
     base_payload, region, region_id_str = parts[0], parts[1], parts[2]
     region_id = int(region_id_str)
 

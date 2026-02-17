@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from sqlalchemy.orm import Session
 
+from app.addons.button_text import BUTTON_TEXTS
 from app.database.models import Server, Subscribers
 
 
@@ -35,7 +36,6 @@ async def get_servers_keyboard(session: Session) -> InlineKeyboardMarkup:
                 callback_data=f'{server.region}-{server.region_id}'
             )
         ])
-
     # Если серверов нет — показываем уведомление
     if not buttons:
         buttons.append([
@@ -46,67 +46,66 @@ async def get_servers_keyboard(session: Session) -> InlineKeyboardMarkup:
         ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-main = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='Купить 💳')],
-                                     [KeyboardButton(text='Проверить подписку ✅')],
-                                     [KeyboardButton(text='Как подключить ⚙️')],
-                                     [KeyboardButton(text='Помощь 🆘'),
-                                      KeyboardButton(text='О VPN ℹ️')]],
-                           resize_keyboard=True)
-
-
-help_kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text='Написать',
-                          url="https://t.me/ZenithVPN_support",
-                          callback_data='help_button')]])
 
 def get_buy_kb(region: str, region_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text='Подписка на 1 месяц',
-            callback_data=f'one_month|{region}|{region_id}'
-        )],
-        [InlineKeyboardButton(
-            text='Подписка на 6 месяцев',
-            callback_data=f'six_month|{region}|{region_id}'
-        )],
-        [InlineKeyboardButton(
-            text='Подписка на 12 месяцев',
-            callback_data=f'twelve_month|{region}|{region_id}'
-        )],
-        [InlineKeyboardButton(
-            text='Пробная подписка на 3 дня',
-            callback_data=f'test_3_days|{region}|{region_id}'
-        )]
+        [InlineKeyboardButton(text=BUTTON_TEXTS["buy_1"], callback_data=f'one_month|{region}|{region_id}')],
+        [InlineKeyboardButton(text=BUTTON_TEXTS["buy_6"], callback_data=f'six_month|{region}|{region_id}')],
+        [InlineKeyboardButton(text=BUTTON_TEXTS["buy_12"], callback_data=f'twelve_month|{region}|{region_id}')],
+        [InlineKeyboardButton(text=BUTTON_TEXTS["buy_test"], callback_data=f'test_3_days|{region}|{region_id}')],
     ])
 
-confirm_order_kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text='Написать',
-                          url="https://t.me/ZenithVPN_support",
-                          callback_data='confirm_order_kb')]])
+def get_renew_buy_kb(sub_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=BUTTON_TEXTS["renew_1"], callback_data=f"renew_pay|{sub_id}|monthly_subs")],
+        [InlineKeyboardButton(text=BUTTON_TEXTS["renew_6"], callback_data=f"renew_pay|{sub_id}|semi_annual_subs")],
+        [InlineKeyboardButton(text=BUTTON_TEXTS["renew_12"], callback_data=f"renew_pay|{sub_id}|annual_subs")],
+    ])
 
-how_to_connect_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='iPhone 📱')],
-                                                  [KeyboardButton(text='Android 📱')],
-                                                  [KeyboardButton(text='Скачал✅')],
-                                                  [KeyboardButton(text='Назад ↩️')]],
+
+main = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text=BUTTON_TEXTS["products"])],
+        [KeyboardButton(text=BUTTON_TEXTS["my_subs"])],
+        [KeyboardButton(text=BUTTON_TEXTS["how_connect"])],
+        [
+            KeyboardButton(text=BUTTON_TEXTS["help"]),
+            KeyboardButton(text=BUTTON_TEXTS["about"])
+        ]
+    ],
+    resize_keyboard=True
+)
+
+
+help_kb = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text=BUTTON_TEXTS["write"],
+                          url="https://t.me/ZenithVPN_support",
+                          callback_data='help_button')]])
+
+how_to_connect_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=BUTTON_TEXTS["iphone"])],
+                                                  [KeyboardButton(text=BUTTON_TEXTS["android"])],
+                                                  [KeyboardButton(text=BUTTON_TEXTS["back"])]],
                              resize_keyboard=True)
 
+accept_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=BUTTON_TEXTS["downloaded"])],
+                                          [KeyboardButton(text=BUTTON_TEXTS["back"])]],
+                                resize_keyboard=True)
+
 iphone_kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text='СКАЧАТЬ',
+    [InlineKeyboardButton(text=BUTTON_TEXTS["download"],
                           url="https://apps.apple.com/ru/app/wireguard/id1441195209",
                           callback_data='iph_kb')]])
 
 android_kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text='СКАЧАТЬ',
+    [InlineKeyboardButton(text=BUTTON_TEXTS["download"],
                           url="https://play.google.com/store/apps/details?id=com.wireguard.android&pcampaignid=web_share",
                           callback_data='and_kb')]])
 
 download_kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text='Инструкция для iPhone',
-                          url="https://teletype.in/@zenithvpn/ogi7tHwL4qV",
-                          callback_data='instruct_iph')],
-    [InlineKeyboardButton(text='Инструкция для Android',
-                          url='https://teletype.in/@zenithvpn/N1lyKcbCMeV',
-                          callback_data='instruct_and')],
-    [InlineKeyboardButton(text='Проверить VPN',
-                          url='https://2ip.ru',
-                          callback_data='check_bt')]])
+    [InlineKeyboardButton(text=BUTTON_TEXTS["instruction_iphone"],
+                          url="https://teletype.in/@zenithvpn/ogi7tHwL4qV")],
+    [InlineKeyboardButton(text=BUTTON_TEXTS["instruction_android"],
+                          url='https://teletype.in/@zenithvpn/N1lyKcbCMeV')],
+    [InlineKeyboardButton(text=BUTTON_TEXTS["check_vpn"],
+                          url='https://2ip.ru')]
+])
