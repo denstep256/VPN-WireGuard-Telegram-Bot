@@ -11,8 +11,9 @@ main_admin = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='Купить �
 
 admin_panel = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='Рассылка'),
                                              KeyboardButton(text='Статистика')],
-                                            [KeyboardButton(text='Добавить сервер')],
-                                            [KeyboardButton(text='Администрирование подписок ')],
+                                            [KeyboardButton(text='Добавить сервер'),
+                                             KeyboardButton(text='Администрирование подписок')],
+                                            [KeyboardButton(text='Пинг серверов')],
                                             [KeyboardButton(text='Назад (Админ)')]],
                            resize_keyboard=True)
 

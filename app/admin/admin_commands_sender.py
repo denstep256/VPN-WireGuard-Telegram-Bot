@@ -23,7 +23,7 @@ class BroadcastState(StatesGroup):
 @admin_command_router.message(F.text == 'Рассылка')
 async def choose_broadcast_type(message: Message, state: FSMContext):
     if message.from_user.id == int(ADMIN_ID):
-        await message.answer('Выберите тип рассылки:', reply_markup=kb.send_kb)  # Предполагаем, что у вас есть клавиатура для выбора
+        await message.answer('Выберите тип рассылки:', reply_markup=kb.send_kb)
         await state.set_state(BroadcastState.choosing_type)
     else:
         await message.answer('У вас нет доступа')
