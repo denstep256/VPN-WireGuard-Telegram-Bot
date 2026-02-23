@@ -96,6 +96,8 @@ accept_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=BUTTON_TEXTS["dow
                                           [KeyboardButton(text=BUTTON_TEXTS["back"])]],
                                 resize_keyboard=True)
 
+back_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=BUTTON_TEXTS["back"])]], resize_keyboard=True)
+
 iphone_kb = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text=BUTTON_TEXTS["download"],
                           url="https://apps.apple.com/ru/app/wireguard/id1441195209",

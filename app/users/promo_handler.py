@@ -3,6 +3,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy import select
+import app.users.keyboard as kb
 
 from app.addons.button_text import BUTTON_TEXTS
 from app.database.models import async_session, PromoCode, PromoRedemption
@@ -15,7 +16,7 @@ class PromoStates(StatesGroup):
 @promocode_router.message(F.text == BUTTON_TEXTS["promocode"])
 async def promo_start(message: Message, state: FSMContext):
     await state.set_state(PromoStates.waiting_code)
-    await message.answer("Введите промокод:")
+    await message.answer("Введите промокод:", reply_markup=kb.back_kb)
 
 @promocode_router.message(PromoStates.waiting_code)
 async def promo_entered(message: Message, state: FSMContext):
@@ -27,13 +28,13 @@ async def promo_entered(message: Message, state: FSMContext):
         promo = pres.scalar_one_or_none()
 
         if not promo or not promo.is_active:
-            await message.answer("❌ Промокод не найден или отключён.")
+            await message.answer("❌ Промокод не найден или отключён.", reply_markup=kb.get_main_keyboard(message.from_user.id))
             await state.clear()
             return
 
         # персональный промокод
         if promo.owner_tg_id is not None and promo.owner_tg_id != tg_id:
-            await message.answer("⚠️ Этот промокод предназначен для другого пользователя.")
+            await message.answer("⚠️ Этот промокод предназначен для другого пользователя.", reply_markup=kb.get_main_keyboard(message.from_user.id))
             await state.clear()
             return
 
@@ -46,7 +47,7 @@ async def promo_entered(message: Message, state: FSMContext):
         redemption = rres.scalar_one_or_none()
 
         if redemption and redemption.uses_count >= promo.max_uses_per_user:
-            await message.answer("⚠️ Этот промокод уже был использован максимальное число раз.")
+            await message.answer("⚠️ Этот промокод уже был использован максимальное число раз.", reply_markup=kb.get_main_keyboard(message.from_user.id))
             await state.clear()
             return
 
@@ -63,5 +64,5 @@ async def promo_entered(message: Message, state: FSMContext):
 
         await session.commit()
 
-    await message.answer("✅ Промокод принят! Скидка применится при оплате.")
+    await message.answer("✅ Промокод принят! Скидка применится при оплате.", reply_markup=kb.get_main_keyboard(message.from_user.id))
     await state.clear()

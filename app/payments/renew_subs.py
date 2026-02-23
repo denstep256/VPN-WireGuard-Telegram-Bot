@@ -108,7 +108,9 @@ async def create_invoice_for_renew(call: CallbackQuery):
 
     await call.answer()
 
-@renew_pay_router.pre_checkout_query()
+@renew_pay_router.pre_checkout_query(
+    F.invoice_payload.startswith("renew|")
+)
 async def renew_pre_checkout(pre_checkout_query: PreCheckoutQuery, bot: Bot):
     payload = pre_checkout_query.invoice_payload
     parts = payload.split("|")
@@ -147,7 +149,9 @@ async def renew_pre_checkout(pre_checkout_query: PreCheckoutQuery, bot: Bot):
 
     await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
 
-@renew_pay_router.message(F.successful_payment)
+@renew_pay_router.message(
+    F.successful_payment.invoice_payload.startswith("renew|")
+)
 async def handle_renew_success(message: Message):
     payload = message.successful_payment.invoice_payload
     parts = payload.split("|")
@@ -169,6 +173,10 @@ async def handle_renew_success(message: Message):
     months = PLAN_TO_MONTHS[plan]
     today = date.today()
 
+    server_region = None
+    server_region_id = None
+    new_expiry = None
+
     async with async_session() as session:
         # найдём подписку
         res = await session.execute(
@@ -179,10 +187,18 @@ async def handle_renew_success(message: Message):
             await message.answer("❌ Подписка не найдена.")
             return
 
+        server_region = sub.server_region
+        server_region_id = sub.server_region_id
+
         # старт продления: от текущей даты окончания, либо от сегодня если уже просрочено
         current_expiry = sub.expiry_date
         if isinstance(current_expiry, datetime):
             current_expiry = current_expiry.date()
+        elif isinstance(current_expiry, str):
+            try:
+                current_expiry = datetime.strptime(current_expiry, "%Y-%m-%d").date()
+            except (ValueError, TypeError):
+                current_expiry = None
 
         base_date = current_expiry if current_expiry and current_expiry >= today else today
         new_expiry = add_months(base_date, months)
@@ -208,7 +224,7 @@ async def handle_renew_success(message: Message):
 
     await message.answer(
         "✅ <b>Подписка продлена!</b>\n\n"
-        f"📍 <b>Сервер:</b> {sub.server_region} №{sub.server_region_id}\n"
+        f"📍 <b>Сервер:</b> {server_region} №{server_region_id}\n"
         f"💳 <b>Тариф:</b> {plan}\n"
         f"⏳ <b>Активна до:</b> <b>{new_expiry}</b>",
         parse_mode="HTML"

@@ -383,7 +383,11 @@ async def create_invoice_any(call: CallbackQuery):
 # -----------------------------
 # Pre-checkout
 # -----------------------------
-@pay_router.pre_checkout_query()
+@pay_router.pre_checkout_query(
+    F.invoice_payload.startswith("monthly_subs") |
+    F.invoice_payload.startswith("semi_annual_subs") |
+    F.invoice_payload.startswith("annual_subs")
+)
 async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: Bot):
     parts = (pre_checkout_query.invoice_payload or "").split("|")
 
@@ -409,7 +413,11 @@ async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: 
 # -----------------------------
 # Successful payment (+ promo consume + referral bonus)
 # -----------------------------
-@pay_router.message(F.successful_payment)
+@pay_router.message(
+    F.successful_payment.invoice_payload.startswith("monthly_subs") |
+    F.successful_payment.invoice_payload.startswith("semi_annual_subs") |
+    F.successful_payment.invoice_payload.startswith("annual_subs")
+)
 async def handle_successful_payment(message: Message):
     try:
         base_payload, region, region_id, discount_from_payload, bonus_reserved = _parse_payment_payload(
