@@ -1,75 +1,68 @@
 import aiohttp
 import os
 from wg_easy_api_wrapper.server import Server
-from config import WG_API, WG_ADDRESS
 
-async def add_client_wg(client_name: str, url, password):
-    async with aiohttp.ClientSession() as session:
+# --- NEW: общий хелпер с отключенным SSL ---
+def _create_wg_session() -> aiohttp.ClientSession:
+    connector = aiohttp.TCPConnector(ssl=False)  # ✅ фикс self-signed cert
+    return aiohttp.ClientSession(connector=connector)
+
+
+async def _with_server(url: str, password: str, fn):
+    """
+    Единая обертка:
+    - создаёт session (ssl=False)
+    - создаёт Server
+    - логинится
+    - выполняет fn(server)
+    - закрывает session
+    """
+    async with _create_wg_session() as session:
         server = Server(url, password, session)
-
-        # Авторизация
         await authorize(server)
+        return await fn(server)
 
-        # Добавление клиента
+
+async def add_client_wg(client_name: str, url: str, password: str):
+    async def action(server: Server):
         await add_client(server, client_name)
+        return None
+
+    return await _with_server(url, password, action)
 
 
-async def get_config_wg(client_name: str, url, password):
-    async with aiohttp.ClientSession() as session:
-        server = Server(url, password, session)
+async def get_config_wg(client_name: str, url: str, password: str):
+    async def action(server: Server):
+        file_path = await save_client_configuration(server, client_name)
+        if file_path:
+            print(file_path)
+        return file_path
 
-        # Авторизация
-        await authorize(server)
-        # Получение конфигурации клиента
-        config = await save_client_configuration(server, client_name)
-        if config:
-            print(config)
+    return await _with_server(url, password, action)
 
 
-async def remove_client_wg(client_name: str, url, password):
-    async with aiohttp.ClientSession() as session:
-        server = Server(url, password, session)
-
-        # Авторизация
-        await authorize(server)
-        # Удаление клиента
+async def remove_client_wg(client_name: str, url: str, password: str):
+    async def action(server: Server):
         await remove_client_by_name(server, client_name)
+        return None
 
-async def get_client_count_wg(url, password):
-    async with aiohttp.ClientSession() as session:
-        server = Server(url, password, session)
+    return await _with_server(url, password, action)
 
-        # Авторизация
-        await authorize(server)
-        # Получение количества клиентов
-        count = await get_client_count(server)
-        return count
+
+async def get_client_count_wg(url: str, password: str) -> int:
+    async def action(server: Server):
+        return await get_client_count(server)
+
+    return await _with_server(url, password, action)
+
 
 async def authorize(server: Server) -> None:
-    """
-    Авторизует пользователя на сервере wg-easy.
-    """
     await server.login()
-    # try:
-    #     await server.login()
-    #     print("Успешно авторизован!")
-    # except AlreadyLoggedInError:
-    #     print("Уже авторизован!")
-    # except Exception as e:
-    #     print(f"Ошибка авторизации: {e}")
+
 
 async def remove_client_by_name(server: Server, client_name: str) -> None:
-    """
-    Удаляет клиента по его имени.
-
-    :param server: Экземпляр сервера
-    :param client_name: Имя клиента для удаления
-    """
-
-    # Получаем список всех клиентов
     clients = await server.get_clients()
 
-    # Ищем клиента по имени
     client_to_remove = None
     for client in clients:
         if client.name == client_name:
@@ -77,37 +70,17 @@ async def remove_client_by_name(server: Server, client_name: str) -> None:
             break
 
     if client_to_remove:
-            # Удаляем клиента по его UID
         await server.remove_client(client_to_remove.uid)
 
 
 async def add_client(server: Server, client_name: str) -> None:
-    """
-    Добавляет клиента с указанным именем.
-
-    :param server: Экземпляр сервера
-    :param client_name: Имя нового клиента
-    """
     await server.create_client(client_name)
-    # try:
-    #     await server.create_client(client_name)
-    #     print(f"Клиент {client_name} успешно добавлен.")
-    # except Exception as e:
-    #     print(f"Ошибка при добавлении клиента {client_name}: {e}")
 
-async def get_client_configuration_by_name(server: Server, client_name: str) -> str:
-    """
-    Получает конфигурационный файл клиента по его имени.
 
-    :param server: Экземпляр сервера
-    :param client_name: Имя клиента для получения конфигурации
-    :return: Конфигурационный файл в виде текста
-    """
+async def get_client_configuration_by_name(server: Server, client_name: str) -> str | None:
     try:
-        # Получаем список всех клиентов
         clients = await server.get_clients()
 
-        # Ищем клиента по имени
         client_to_get = None
         for client in clients:
             if client.name == client_name:
@@ -115,62 +88,29 @@ async def get_client_configuration_by_name(server: Server, client_name: str) -> 
                 break
 
         if client_to_get:
-            # Получаем конфигурацию клиента
-            config = await client_to_get.get_configuration()
-            # print(f"Конфигурация клиента '{client_name}' успешно получена.")
-            return config
-        else:
-            # print(f"Клиент с именем '{client_name}' не найден.")
-            return None
-    except Exception as e:
-        # print(f"Ошибка при получении конфигурации клиента '{client_name}': {e}")
+            return await client_to_get.get_configuration()
+        return None
+    except Exception:
         return None
 
-async def save_client_configuration(server: Server, client_name: str) -> str:
-    """
-    Сохраняет конфигурацию клиента в файл с расширением .conf и именем клиента.
 
-    :param server: Экземпляр сервера
-    :param client_name: Имя клиента для получения конфигурации
-    :return: Путь к сохраненному файлу
-    """
+async def save_client_configuration(server: Server, client_name: str) -> str | None:
     try:
-        # Получаем конфигурацию клиента по имени
         config_text = await get_client_configuration_by_name(server, client_name)
-
         if config_text is None:
-            # print(f"Конфигурация для клиента {client_name} не найдена.")
             return None
 
-        # Указываем путь к папке auth
         folder_path = "app/auth"
-
-        # Формируем путь к файлу с расширением .conf
         file_path = os.path.join(folder_path, f"{client_name}.conf")
 
-        # Записываем конфигурацию в файл
         with open(file_path, "w") as config_file:
             config_file.write(config_text)
 
-        # print(f"Конфигурация клиента {client_name} успешно сохранена в {file_path}.")
         return file_path
-
-    except Exception as e:
-        # print(f"Ошибка при сохранении конфигурации для клиента {client_name}: {e}")
+    except Exception:
         return None
 
+
 async def get_client_count(server: Server) -> int:
-    """
-    Возвращает количество клиентов на сервере.
-
-    :param server: Экземпляр сервера
-    :return: Количество клиентов
-    """
-
     clients = await server.get_clients()
-    client_count = len(clients)
-    return client_count
-
-
-
-
+    return len(clients)

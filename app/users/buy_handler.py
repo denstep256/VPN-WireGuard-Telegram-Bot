@@ -45,7 +45,7 @@ async def handle_server_selection(callback: CallbackQuery):
                 Server.is_active == True
             )
         )
-        server = result.scalar_one_or_none()  # аналог .first()
+        server = result.scalar_one_or_none()
 
         if not server:
             await callback.answer("❌ Сервер не найден или недоступен.", show_alert=True)

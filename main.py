@@ -12,6 +12,8 @@ from app.users.buy_handler import user_buy_router
 from app.users.handlers import router
 from app.admin.admin_handlers import admin_router
 from app.payments.payments import pay_router
+from app.users.invite_handler import invite_router
+from app.users.promo_handler import promocode_router
 from app.users.renew_handler import user_renew_router
 from app.users.trial import trial_router
 from app.admin.admin_commands_sender import admin_command_router
@@ -44,14 +46,15 @@ async def main():
     dp.include_router(pay_router)
     dp.include_router(renew_pay_router)
     dp.include_router(trial_router)
+    dp.include_router(invite_router)
+    dp.include_router(promocode_router)
+    dp.include_router(user_renew_router)
+    dp.include_router(user_buy_router)
     dp.include_router(admin_router)
     dp.include_router(admin_command_router)
     dp.include_router(admin_command_add_server_router)
     dp.include_router(admin_subs_router)
     dp.include_router(admin_pinger_router)
-    dp.include_router(user_renew_router)
-    dp.include_router(user_buy_router)
-
 
     await dp.start_polling(bot)
 

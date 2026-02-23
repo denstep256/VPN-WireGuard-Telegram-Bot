@@ -13,6 +13,7 @@ from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
 
 import app.admin.admin_keyboard as kb
+from app.users.keyboard import get_main_keyboard
 from app.wg_api.wg_api import get_client_count_wg
 from config import ADMIN_ID
 from app.database.models import async_session, TestPeriod, User, Subscribers, Payments, Server
@@ -85,7 +86,7 @@ async def admin_panel_button(message: Message):
 @admin_router.message(F.text == "Назад (Админ)")
 async def help_main_button(message: Message):
     if is_admin(message.from_user.id):
-        await message.answer("Вы вернулись в главное меню", reply_markup=kb.main_admin)
+        await message.answer("Вы вернулись в главное меню", reply_markup=get_main_keyboard(message.from_user.id))
     else:
         await message.answer("У вас нет доступа")
 
@@ -128,7 +129,7 @@ async def clients_on_servers_wg(message: Message):
     lines = ["📊 <b>Клиенты WireGuard по серверам</b>\n"]
 
     for s in servers:
-        url = f"http://{s.host_ip}:{s.port}"
+        url = f"https://{s.host_ip}:{s.port}"
 
         try:
             count = await get_client_count_wg(url, s.password)

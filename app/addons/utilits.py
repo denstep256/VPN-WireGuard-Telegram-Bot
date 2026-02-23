@@ -44,7 +44,7 @@ async def check_available_clients_count(region: str = None, region_id: int = Non
         # Получаем параметры (если понадобятся позже, например для логгирования или ограничений)
         host = server.host_ip
         port = server.port
-        ip = f"http://{host}:{port}"
+        ip = f"https://{host}:{port}"
         password = server.password
         count = await get_client_count_wg(ip, password)
 

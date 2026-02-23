@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.addons.button_text import BUTTON_TEXTS
 from app.database.models import Server, Subscribers
+from config import ADMIN_ID
 
 
 def get_subscriptions_kb(subs: list[Subscribers]) -> InlineKeyboardMarkup:
@@ -63,18 +64,22 @@ def get_renew_buy_kb(sub_id: int) -> InlineKeyboardMarkup:
     ])
 
 
-main = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text=BUTTON_TEXTS["products"])],
-        [KeyboardButton(text=BUTTON_TEXTS["my_subs"])],
-        [KeyboardButton(text=BUTTON_TEXTS["how_connect"])],
-        [
-            KeyboardButton(text=BUTTON_TEXTS["help"]),
-            KeyboardButton(text=BUTTON_TEXTS["about"])
-        ]
-    ],
-    resize_keyboard=True
-)
+# main = ReplyKeyboardMarkup(
+#     keyboard=[
+#         [KeyboardButton(text=BUTTON_TEXTS["products"])],
+#         [KeyboardButton(text=BUTTON_TEXTS["my_subs"])],
+#         [KeyboardButton(text=BUTTON_TEXTS["how_connect"])],
+# [
+#             KeyboardButton(text=BUTTON_TEXTS["promocode"]),
+#             KeyboardButton(text=BUTTON_TEXTS["invite_friend"])
+#         ],
+#         [
+#             KeyboardButton(text=BUTTON_TEXTS["help"]),
+#             KeyboardButton(text=BUTTON_TEXTS["about"])
+#         ]
+#     ],
+#     resize_keyboard=True
+# )
 
 
 help_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -109,3 +114,26 @@ download_kb = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text=BUTTON_TEXTS["check_vpn"],
                           url='https://2ip.ru')]
 ])
+
+def get_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
+    keyboard = [
+        [KeyboardButton(text=BUTTON_TEXTS["products"])],
+        [KeyboardButton(text=BUTTON_TEXTS["my_subs"])],
+        [KeyboardButton(text=BUTTON_TEXTS["how_connect"])],
+        [
+            KeyboardButton(text=BUTTON_TEXTS["promocode"]),
+            KeyboardButton(text=BUTTON_TEXTS["invite_friend"]),
+        ],
+        [
+            KeyboardButton(text=BUTTON_TEXTS["help"]),
+            KeyboardButton(text=BUTTON_TEXTS["about"]),
+        ],
+    ]
+
+    if user_id == int(ADMIN_ID):
+        keyboard.append([KeyboardButton(text=BUTTON_TEXTS["admin"])])
+
+    return ReplyKeyboardMarkup(
+        keyboard=keyboard,
+        resize_keyboard=True
+    )

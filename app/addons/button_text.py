@@ -3,6 +3,8 @@ BUTTON_TEXTS = {
     "products": "Товары",
     "my_subs": "Мои подписки",
     "how_connect": "Как подключить ⚙️",
+    "promocode": "Промокод",
+    "invite_friend": "Пригласить друга",
     "help": "Помощь 🆘",
     "about": "О VPN ℹ️",
 

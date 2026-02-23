@@ -3,19 +3,19 @@ from aiogram.types import (ReplyKeyboardMarkup, KeyboardButton,
 
 from app.addons.button_text import BUTTON_TEXTS
 
-main_admin = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text=BUTTON_TEXTS["products"])],
-        [KeyboardButton(text=BUTTON_TEXTS["my_subs"])],
-        [KeyboardButton(text=BUTTON_TEXTS["how_connect"])],
-        [
-            KeyboardButton(text=BUTTON_TEXTS["help"]),
-            KeyboardButton(text=BUTTON_TEXTS["about"])
-        ],
-        [KeyboardButton(text=BUTTON_TEXTS["admin"])]
-    ],
-    resize_keyboard=True
-)
+# main_admin = ReplyKeyboardMarkup(
+#     keyboard=[
+#         [KeyboardButton(text=BUTTON_TEXTS["products"])],
+#         [KeyboardButton(text=BUTTON_TEXTS["my_subs"])],
+#         [KeyboardButton(text=BUTTON_TEXTS["how_connect"])],
+#         [
+#             KeyboardButton(text=BUTTON_TEXTS["help"]),
+#             KeyboardButton(text=BUTTON_TEXTS["about"])
+#         ],
+#         [KeyboardButton(text=BUTTON_TEXTS["admin"])]
+#     ],
+#     resize_keyboard=True
+# )
 
 
 admin_panel = ReplyKeyboardMarkup(

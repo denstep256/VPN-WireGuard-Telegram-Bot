@@ -8,6 +8,7 @@ from sqlalchemy import select
 import app.admin.admin_keyboard as kb
 from app.admin.admin_handlers import is_admin
 from app.database.models import async_session, Server
+from app.users.keyboard import get_main_keyboard
 
 admin_pinger_router = Router()
 
@@ -67,4 +68,4 @@ async def ping_servers(message: Message):
         else:
             lines.append(f"❌ <b>{s.region} №{s.region_id}</b> ({s.host_ip})")
 
-    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb.main_admin)
+    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=get_main_keyboard(message.from_user.id))

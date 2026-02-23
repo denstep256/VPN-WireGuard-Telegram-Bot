@@ -370,7 +370,7 @@ async def create_new_finish(call: CallbackQuery, state: FSMContext):
         await session.flush()
         new_sub_id = int(new_sub.id)
 
-        url = f"http://{server.host_ip}:{server.port}"
+        url = f"https://{server.host_ip}:{server.port}"
         password = server.password
 
         await add_client_wg(client_name, url, password)
@@ -662,7 +662,7 @@ async def delete_confirm(call: CallbackQuery, state: FSMContext):
             url = None
             password = None
         else:
-            url = f"http://{server.host_ip}:{server.port}"
+            url = f"https://{server.host_ip}:{server.port}"
             password = server.password
 
         # 2) удаляем запись из БД
