@@ -1,52 +1,61 @@
-import os
+from datetime import date, timedelta
 
 from aiogram import Bot
-from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from sqlalchemy import select
-from app.database.models import async_session, User
+from apscheduler.triggers.interval import IntervalTrigger
+from sqlalchemy import select, update
+
+from app.addons.utilits import parse_date_value
+from app.database.models import Subscribers, TestPeriod, async_session
+
+
+_scheduler: AsyncIOScheduler | None = None
+
 
 async def update_static(bot: Bot):
+    _ = bot
+    tomorrow = date.today() + timedelta(days=1)
+
     async with async_session() as session:
-        # Запрос всех пользователей, у которых is_active_subs и is_active_trial == 0
-        query = select(User).where(User.is_active_subs == 0, User.is_active_trial == 0)
-        result = await session.execute(query)
-        inactive_users = result.scalars().all()
-
-        for user in inactive_users:
-            # Проверка, что пользователя нет в таблице Static
-            static_query = select(Static).where(Static.tg_id == user.tg_id)
-            static_result = await session.execute(static_query)
-            user_in_static = static_result.scalar_one_or_none()
-
-            if not user_in_static:
-                # Если пользователя нет в Static, добавляем его
-                new_static_user = Static(
-                    tg_id=user.tg_id,
-                    username=user.username or "unknown",
-                    use_trial=user.use_trial,  # Взято из таблицы User
-                    use_subs=user.use_subs # Взято из таблицы User
+        subs_result = await session.execute(
+            select(Subscribers).where(Subscribers.notif_oneday == True)  # noqa: E712
+        )
+        subs = subs_result.scalars().all()
+        for sub in subs:
+            expiry = parse_date_value(sub.expiry_date)
+            if expiry and expiry > tomorrow:
+                await session.execute(
+                    update(Subscribers).where(Subscribers.id == sub.id).values(notif_oneday=False)
                 )
-                session.add(new_static_user)
-        # Применяем изменения в базе данных
+
+        trial_result = await session.execute(
+            select(TestPeriod).where(
+                TestPeriod.subscription == "trial",
+                TestPeriod.notif_oneday == True,  # noqa: E712
+            )
+        )
+        trials = trial_result.scalars().all()
+        for trial in trials:
+            expiry = parse_date_value(trial.expiry_date)
+            if expiry and expiry > tomorrow:
+                await session.execute(
+                    update(TestPeriod).where(TestPeriod.id == trial.id).values(notif_oneday=False)
+                )
+
         await session.commit()
 
 
-
-# Настройка планировщика
 def setup_scheduler_update_static(bot: Bot):
+    global _scheduler
+    if _scheduler and _scheduler.running:
+        return
 
-    # Инициализация планировщика
-    scheduler = AsyncIOScheduler(timezone='Europe/Moscow')
-
-    # Настройка задачи для проверки подписок (например, раз в день)
-    scheduler.add_job(
+    _scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
+    _scheduler.add_job(
         update_static,
-        trigger=IntervalTrigger(hours=4),  # Задаём интервал выполнения
-        id='update_static',
-        kwargs={'bot': bot},
-        replace_existing=True
+        trigger=IntervalTrigger(hours=4),
+        id="update_static",
+        kwargs={"bot": bot},
+        replace_existing=True,
     )
-
-    # Запуск планировщика
-    scheduler.start()
+    _scheduler.start()

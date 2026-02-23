@@ -1,77 +1,75 @@
-from datetime import datetime
-from aiogram import Bot
-from apscheduler.triggers.interval import IntervalTrigger
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from sqlalchemy import select, update, delete
+from datetime import date
 
-from app.database.models import async_session, TestPeriod, User
-from app.addons.utilits import delete_file_by_name
+from aiogram import Bot
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+from sqlalchemy import select, update
+
+from app.addons.utilits import delete_file_by_name, parse_date_value
+from app.database.models import Server, TestPeriod, async_session
 from app.users.handlers import texts_for_bot
 from app.wg_api.wg_api import remove_client_wg
 
 
-# Функция для проверки подписок, которые истекают завтра
+_scheduler: AsyncIOScheduler | None = None
+
+
 async def check_subscriptions_trial(bot: Bot):
+    today = date.today()
+
     async with async_session() as session:
-        now = (datetime.now()).date()
+        trials_result = await session.execute(select(TestPeriod).where(TestPeriod.subscription == "trial"))
+        trials = trials_result.scalars().all()
 
-        # Запрос для поиска подписок, у которых истекает пробный период сегодня
-        query = select(TestPeriod).filter(TestPeriod.expiry_date == now)
-        result = await session.execute(query)
-        expiring_subscriptions = result.scalars().all()
+        servers_result = await session.execute(select(Server))
+        servers = servers_result.scalars().all()
 
+        for trial in trials:
+            expiry = parse_date_value(trial.expiry_date)
+            if expiry != today:
+                continue
 
-        # Отправляем уведомления пользователям, чьи подписки истекают
-        for subscription in expiring_subscriptions:
-            user_id = subscription.tg_id
-            message = texts_for_bot["end_trial_sub"]
+            try:
+                await bot.send_message(
+                    chat_id=trial.tg_id,
+                    text=texts_for_bot["end_trial_sub"],
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
 
-            # Отправляем сообщение в Telegram
-            await bot.send_message(chat_id=user_id, text=message, parse_mode='HTML')
+            delete_file_by_name(trial.file_name)
 
+            for server in servers:
+                try:
+                    await remove_client_wg(
+                        trial.file_name,
+                        f"https://{server.host_ip}:{server.port}",
+                        server.password,
+                    )
+                except Exception:
+                    continue
 
-            # Получение имени клиента для удаления
-            query = select(TestPeriod.file_name).filter(TestPeriod.tg_id == user_id)
-            result = await session.execute(query)
-            client_name = result.scalars().first()
-
-            delete_file_by_name(client_name)
-
-            await remove_client_wg(client_name)
-
-
-            # Обновление данных пользователя
-            update_query = (
-                update(User)
-                .where(User.tg_id == user_id)
-                .values(is_active_trial=False)
+            await session.execute(
+                update(TestPeriod)
+                .where(TestPeriod.id == trial.id)
+                .values(subscription="trial_used", notif_oneday=True)
             )
-            await session.execute(update_query)
 
-            # Удаление записи из таблицы TestPeriod
-            delete_query = (
-                delete(TestPeriod)
-                .where(TestPeriod.tg_id == user_id)
-            )
-            await session.execute(delete_query)
-
-        # Фиксация изменений в базе данных
         await session.commit()
 
-# Настройка планировщика
+
 def setup_scheduler_trial_notif_end_day(bot: Bot):
+    global _scheduler
+    if _scheduler and _scheduler.running:
+        return
 
-    # Инициализация планировщика
-    scheduler = AsyncIOScheduler(timezone='Europe/Moscow')
-
-    # Настройка задачи для проверки подписок (например, раз в день)
-    scheduler.add_job(
+    _scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
+    _scheduler.add_job(
         check_subscriptions_trial,
-        trigger=IntervalTrigger(hours=8),  # Задаём интервал выполнения
-        id='check_subscriptions_trial_end_day',
-        kwargs={'bot': bot},
-        replace_existing=True
+        trigger=CronTrigger(hour=11, minute=15),
+        id="check_subscriptions_trial_endday",
+        kwargs={"bot": bot},
+        replace_existing=True,
     )
-
-    # Запуск планировщика
-    scheduler.start()
+    _scheduler.start()

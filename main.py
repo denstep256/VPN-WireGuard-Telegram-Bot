@@ -2,6 +2,7 @@ import config
 import asyncio
 
 from app.admin.admin_commands_add_server import admin_command_add_server_router
+from app.admin.admin_commands_add_promocode import admin_add_promo_router
 from app.admin.admin_commands_pinger import admin_pinger_router
 from app.database.models import async_main
 
@@ -53,6 +54,7 @@ async def main():
     dp.include_router(admin_router)
     dp.include_router(admin_command_router)
     dp.include_router(admin_command_add_server_router)
+    dp.include_router(admin_add_promo_router)
     dp.include_router(admin_subs_router)
     dp.include_router(admin_pinger_router)
 
@@ -60,5 +62,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
-
 

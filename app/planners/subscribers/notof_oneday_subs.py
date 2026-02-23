@@ -1,55 +1,79 @@
-from datetime import datetime, timedelta
+from datetime import date, timedelta
+
 from aiogram import Bot
-from apscheduler.triggers.interval import IntervalTrigger
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select, update
-from app.database.models import async_session, Subscribers
+
+from app.addons.utilits import parse_date_value
+from app.database.models import Subscribers, async_session
 
 
-# Функция для проверки подписок, которые истекают завтра
+_scheduler: AsyncIOScheduler | None = None
+
+
 async def check_subscriptions(bot: Bot):
+    tomorrow = date.today() + timedelta(days=1)
+
     async with async_session() as session:
-        tomorrow = datetime.now() + timedelta(days=1)
+        result = await session.execute(
+            select(Subscribers).where(Subscribers.notif_oneday == False)  # noqa: E712
+        )
+        subscriptions = result.scalars().all()
 
-        # Запрос для поиска подписок, у которых истекает пробный период завтра
-        query = select(Subscribers).filter(Subscribers.expiry_date == tomorrow.date())
+        for subscription in subscriptions:
+            expiry = parse_date_value(subscription.expiry_date)
+            if expiry != tomorrow:
+                continue
 
-        result = await session.execute(query)
-        expiring_subscriptions = result.scalars().all()
-
-        # Отправляем уведомления пользователям, чьи подписки истекают
-        for subscription in expiring_subscriptions:
-            user_id = subscription.tg_id
-            message = f"⏳ Ваша подписка истекает завтра, {subscription.expiry_date}.\nНе забудьте продлить, чтобы не потерять доступ! 🚀"
-
-            # Отправляем сообщение в Telegram
-            await bot.send_message(chat_id=user_id, text=message, parse_mode='HTML')
-            update_query = (
-                update(Subscribers)
-                .where(Subscribers.tg_id == user_id)
-                .values(notif_oneday=1)
+            message = (
+                "⏳ <b>Напоминание о подписке</b>\n\n"
+                f"Срок доступа к серверу <b>{subscription.server_region} №{subscription.server_region_id}</b> "
+                f"заканчивается <b>{expiry.isoformat()}</b>.\n"
+                "Продлите сейчас, чтобы не терять подключение."
             )
-            await session.execute(update_query)
 
+            renew_kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🔁 Продлить подписку",
+                            callback_data=f"renew_open|{subscription.id}",
+                        )
+                    ]
+                ]
+            )
+
+            try:
+                await bot.send_message(
+                    chat_id=subscription.tg_id,
+                    text=message,
+                    parse_mode="HTML",
+                    reply_markup=renew_kb,
+                )
+                await session.execute(
+                    update(Subscribers)
+                    .where(Subscribers.id == subscription.id)
+                    .values(notif_oneday=True)
+                )
+            except Exception:
+                continue
 
         await session.commit()
 
 
-# Настройка планировщика
 def setup_scheduler_subs_notif_oneday(bot: Bot):
+    global _scheduler
+    if _scheduler and _scheduler.running:
+        return
 
-    # Инициализация планировщика
-    scheduler = AsyncIOScheduler(timezone='Europe/Moscow')
-
-    # Настройка задачи для проверки подписок (например, раз в день)
-    scheduler.add_job(
+    _scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
+    _scheduler.add_job(
         check_subscriptions,
-        trigger=IntervalTrigger(hours=13),  # Задаём интервал выполнения
-        id='check_subscriptions_oneday',
-        kwargs={'bot': bot},
-        replace_existing=True
+        trigger=CronTrigger(hour=10, minute=0),
+        id="check_subscriptions_oneday",
+        kwargs={"bot": bot},
+        replace_existing=True,
     )
-
-    # Запуск планировщика
-    scheduler.start()
-
+    _scheduler.start()

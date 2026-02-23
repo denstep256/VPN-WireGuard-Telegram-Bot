@@ -2,16 +2,16 @@ import os
 
 from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, FSInputFile, \
-    InputMediaPhoto
+    BufferedInputFile
 from sqlalchemy import select
 
 import app.users.keyboard as kb
 from app.addons.button_text import BUTTON_TEXTS
-from app.addons.utilits import format_tariff
+from app.addons.utilits import build_tariff_caption, format_tariff
 from app.database.models import async_session, Subscribers, TestPeriod, Server
+from app.payments.pricing import get_active_discount_percent
 from app.users.handlers import texts_for_bot
-from config import DIR_CONF, one_mounth_fake_price, one_mounth_price, six_mounth_fake_price, six_mounth_price, \
-    twelve_mounth_fake_price, twelve_mounth_price
+from config import DIR_CONF
 
 user_renew_router = Router()
 
@@ -26,7 +26,7 @@ async def check_subscribe_button(message: Message):
         subscribers = subs_result.scalars().all()
 
         test_result = await session.execute(
-            select(TestPeriod).where(TestPeriod.tg_id == tg_id)
+            select(TestPeriod).where(TestPeriod.tg_id == tg_id, TestPeriod.subscription == "trial")
         )
         test_subs = test_result.scalars().all()
 
@@ -51,7 +51,7 @@ async def check_subscribe_button(message: Message):
         buttons.append([InlineKeyboardButton(text=text, callback_data=callback_data)])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    await message.answer("Ваши подписки:", reply_markup=keyboard, parse_mode='HTML')
+    await message.answer("🔐 <b>Ваши активные подключения</b>", reply_markup=keyboard, parse_mode='HTML')
 
 
 @user_renew_router.callback_query(F.data == "no_renew_test")
@@ -148,25 +148,24 @@ async def handle_renew_open(call: CallbackQuery):
         await call.answer("❌ Сервер не найден или недоступен.", show_alert=True)
         return
 
-    caption_text = (
-        "🛡️ <b>Wireguard VPN</b>\n\n"
-        f"📍 <b>Сервер:</b> {server.region} №{server.region_id}\n"
-        f"🧾 <b>Продление для конфигурации:</b> <code>{sub.file_name}</code>\n\n"
-        f"📅 <b>1 мес.</b> — <s>{one_mounth_fake_price} руб.</s>   <b>{one_mounth_price} руб.</b>\n"
-        f"📅 <b>6 мес.</b> — <s>{six_mounth_fake_price} руб.</s>   <b>{six_mounth_price} руб.</b>\n"
-        f"📅 <b>12 мес.</b> — <s>{twelve_mounth_fake_price} руб.</s>   <b>{twelve_mounth_price} руб.</b>"
-    )
+    async with async_session() as session:
+        discount_percent = await get_active_discount_percent(session, tg_id)
 
-    photo = FSInputFile("app/Pictures/WireGuard_ logo.jpeg")
+    caption_text = build_tariff_caption(
+        server_region=server.region,
+        server_region_id=server.region_id,
+        discount_percent=discount_percent,
+        renew_file_name=sub.file_name,
+    )
 
     # ВАЖНО: клавиатура покупки теперь должна содержать sub_id
     buy_kb = kb.get_renew_buy_kb(sub_id=sub_id)
 
-    await call.message.edit_media(
-        media=InputMediaPhoto(media=photo),
-        reply_markup=buy_kb
-    )
-    await call.message.edit_caption(
+    with open("app/Pictures/WireGuard_ logo.jpeg", "rb") as photo_file:
+        photo_bytes = photo_file.read()
+
+    await call.message.answer_photo(
+        photo=BufferedInputFile(photo_bytes, filename="wireguard.jpg"),
         caption=caption_text,
         parse_mode="HTML",
         reply_markup=buy_kb

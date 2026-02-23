@@ -1,79 +1,100 @@
-from datetime import datetime
+from datetime import date
 
 from aiogram import Bot
-from apscheduler.triggers.interval import IntervalTrigger
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from sqlalchemy import select, update, delete
+from apscheduler.triggers.cron import CronTrigger
+from sqlalchemy import select, update
 
-from app.database.models import async_session, User, Subscribers
-from app.addons.utilits import delete_file_by_name
-from app.users.handlers import texts_for_bot
+from app.addons.utilits import delete_file_by_name, parse_date_value
+from app.database.models import Server, Subscribers, async_session
 from app.wg_api.wg_api import remove_client_wg
 
 
-# Функция для проверки подписок, которые истекают завтра
+_scheduler: AsyncIOScheduler | None = None
+
+
 async def check_subscriptions_subs(bot: Bot):
+    today = date.today()
+    marker = f"expired_notified:{today.isoformat()}"
+
     async with async_session() as session:
-        now = (datetime.now()).date()
+        result = await session.execute(select(Subscribers))
+        subscriptions = result.scalars().all()
 
-        # Запрос для поиска подписок, у которых истекает пробный период сегодня
-        query = select(Subscribers).filter(Subscribers.expiry_date == now)
-        result = await session.execute(query)
-        expiring_subscriptions = result.scalars().all()
+        for subscription in subscriptions:
+            expiry = parse_date_value(subscription.expiry_date)
+            if expiry != today:
+                continue
+            if subscription.note == marker:
+                continue
 
-
-        # Отправляем уведомления пользователям, чьи подписки истекают
-        for subscription in expiring_subscriptions:
-            user_id = subscription.tg_id
-            message = texts_for_bot["end_sub"]
-
-            # Отправляем сообщение в Telegram
-            await bot.send_message(chat_id=user_id, text=message, parse_mode='HTML')
-
-
-            # Получение имени клиента для удаления
-            query = select(Subscribers.file_name).filter(Subscribers.tg_id == user_id)
-            result = await session.execute(query)
-            client_name = result.scalars().first()
-
-            delete_file_by_name(client_name)
-
-            await remove_client_wg(client_name)
-
-
-            # Обновление данных пользователя
-            update_query = (
-                update(User)
-                .where(User.tg_id == user_id)
-                .values(is_active_subs = False)
+            message = (
+                "⚠️ <b>Срок подписки истёк сегодня</b>\n\n"
+                f"Сервер: <b>{subscription.server_region} №{subscription.server_region_id}</b>\n"
+                "Чтобы вернуть доступ, продлите подписку одним нажатием."
+            )
+            renew_kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🔁 Продлить подписку",
+                            callback_data=f"renew_open|{subscription.id}",
+                        )
+                    ]
+                ]
             )
 
-            await session.execute(update_query)
+            try:
+                await bot.send_message(
+                    chat_id=subscription.tg_id,
+                    text=message,
+                    parse_mode="HTML",
+                    reply_markup=renew_kb,
+                )
+            except Exception:
+                pass
 
-            # Удаление записи из таблицы Subscribers
-            delete_query = (
-                delete(Subscribers)
-                .where(Subscribers.tg_id == user_id)
+            delete_file_by_name(subscription.file_name)
+
+            server_result = await session.execute(
+                select(Server).where(
+                    Server.region == subscription.server_region,
+                    Server.region_id == subscription.server_region_id,
+                )
             )
-            await session.execute(delete_query)
+            server = server_result.scalar_one_or_none()
 
-        # Фиксация изменений в базе данных
+            if server:
+                try:
+                    await remove_client_wg(
+                        subscription.file_name,
+                        f"https://{server.host_ip}:{server.port}",
+                        server.password,
+                    )
+                except Exception:
+                    pass
+
+            await session.execute(
+                update(Subscribers)
+                .where(Subscribers.id == subscription.id)
+                .values(note=marker)
+            )
+
         await session.commit()
 
-# Настройка планировщика
+
 def setup_scheduler_subs_notif_end_day(bot: Bot):
+    global _scheduler
+    if _scheduler and _scheduler.running:
+        return
 
-    # Инициализация планировщика
-    scheduler = AsyncIOScheduler(timezone='Europe/Moscow')
-
-    # Настройка задачи для проверки подписок (например, раз в день)
-    scheduler.add_job(
+    _scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
+    _scheduler.add_job(
         check_subscriptions_subs,
-        trigger=IntervalTrigger(hours=8),  # Задаём интервал выполнения
-        id='check_subscriptions_subs_endday',
-        kwargs={'bot': bot},
-        replace_existing=True
+        trigger=CronTrigger(hour=11, minute=0),
+        id="check_subscriptions_subs_endday",
+        kwargs={"bot": bot},
+        replace_existing=True,
     )
-
-    # Запуск планировщика
-    scheduler.start()
+    _scheduler.start()

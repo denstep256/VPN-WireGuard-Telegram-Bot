@@ -6,7 +6,7 @@ from sqlalchemy import select
 import app.users.keyboard as kb
 
 from app.addons.button_text import BUTTON_TEXTS
-from app.database.models import async_session, PromoCode, PromoRedemption
+from app.database.models import async_session, PromoCode, PromoRedemption, Payments
 
 promocode_router = Router()
 
@@ -16,7 +16,7 @@ class PromoStates(StatesGroup):
 @promocode_router.message(F.text == BUTTON_TEXTS["promocode"])
 async def promo_start(message: Message, state: FSMContext):
     await state.set_state(PromoStates.waiting_code)
-    await message.answer("Введите промокод:", reply_markup=kb.back_kb)
+    await message.answer("🎟 Введите промокод, и я сразу пересчитаю стоимость тарифа.", reply_markup=kb.back_kb)
 
 @promocode_router.message(PromoStates.waiting_code)
 async def promo_entered(message: Message, state: FSMContext):
@@ -37,6 +37,18 @@ async def promo_entered(message: Message, state: FSMContext):
             await message.answer("⚠️ Этот промокод предназначен для другого пользователя.", reply_markup=kb.get_main_keyboard(message.from_user.id))
             await state.clear()
             return
+
+        if promo.first_purchase_only:
+            pay_res = await session.execute(
+                select(Payments.id).where(Payments.tg_id == tg_id).limit(1)
+            )
+            if pay_res.scalar_one_or_none() is not None:
+                await message.answer(
+                    "⚠️ Этот промокод действует только на первую оплату.",
+                    reply_markup=kb.get_main_keyboard(message.from_user.id),
+                )
+                await state.clear()
+                return
 
         rres = await session.execute(
             select(PromoRedemption).where(
@@ -64,5 +76,8 @@ async def promo_entered(message: Message, state: FSMContext):
 
         await session.commit()
 
-    await message.answer("✅ Промокод принят! Скидка применится при оплате.", reply_markup=kb.get_main_keyboard(message.from_user.id))
+    await message.answer(
+        "✅ Промокод активирован. Новая цена уже будет показана в выборе тарифа.",
+        reply_markup=kb.get_main_keyboard(message.from_user.id),
+    )
     await state.clear()

@@ -1,101 +1,107 @@
 import json
-from datetime import datetime, date
-
-from aiogram import Router, F, Bot
-from aiogram.types import CallbackQuery, Message, LabeledPrice, PreCheckoutQuery
-
-from sqlalchemy import select, update
+from datetime import date, datetime
 
 import config
-from config import one_mounth_price, six_mounth_price, twelve_mounth_price
-from app.database.models import async_session, Subscribers, Payments
+from aiogram import Bot, F, Router
+from aiogram.types import CallbackQuery, FSInputFile, LabeledPrice, Message, PreCheckoutQuery
+from sqlalchemy import select, update
 
-from app.addons.utilits import add_months, PLAN_TO_MONTHS  # или откуда вынесешь
+from app.addons.utilits import add_months, parse_date_value
+from app.database.models import Payments, Server, Subscribers, User, async_session
+from app.payments.pricing import (
+    MIN_PAY_RUB,
+    PLAN_TO_MONTHS,
+    apply_discount,
+    build_provider_data,
+    build_renew_payload,
+    calc_bonus_to_use,
+    get_active_discount_percent,
+    get_base_price,
+    get_user_payments_count,
+    mark_promo_used_if_applicable,
+    parse_renew_payload,
+)
+from app.wg_api.wg_api import add_client_wg, get_config_wg
 
 renew_pay_router = Router()
 
+RENEW_LABELS = {
+    "monthly_subs": "Продление на 1 месяц",
+    "semi_annual_subs": "Продление на 6 месяцев",
+    "annual_subs": "Продление на 12 месяцев",
+}
 
-def plan_to_price(plan: str) -> int:
-    if plan == "monthly_subs":
-        return one_mounth_price
-    if plan == "semi_annual_subs":
-        return six_mounth_price
-    if plan == "annual_subs":
-        return twelve_mounth_price
-    raise ValueError("Unknown plan")
-
-
-def plan_to_label(plan: str) -> str:
-    return {
-        "monthly_subs": "Продление на 1 месяц",
-        "semi_annual_subs": "Продление на 6 месяцев",
-        "annual_subs": "Продление на 12 месяцев",
-    }.get(plan, "Продление подписки")
-
-
-def plan_to_title(plan: str) -> str:
-    return {
-        "monthly_subs": "Продление VPN на 1 мес.",
-        "semi_annual_subs": "Продление VPN на 6 мес.",
-        "annual_subs": "Продление VPN на 12 мес.",
-    }.get(plan, "Продление VPN")
+RENEW_TITLES = {
+    "monthly_subs": "Продление VPN на 1 мес.",
+    "semi_annual_subs": "Продление VPN на 6 мес.",
+    "annual_subs": "Продление VPN на 12 мес.",
+}
 
 
 @renew_pay_router.callback_query(F.data.startswith("renew_pay|"))
 async def create_invoice_for_renew(call: CallbackQuery):
-    # renew_pay|{sub_id}|{plan}
-    parts = call.data.split("|")
-    if len(parts) != 3:
+    parts = (call.data or "").split("|")
+    if len(parts) != 3 or not parts[1].isdigit():
         await call.answer("❌ Ошибка данных.", show_alert=True)
         return
 
     _, sub_id_str, plan = parts
-    if not sub_id_str.isdigit():
-        await call.answer("❌ Некорректный ID подписки.", show_alert=True)
-        return
-
     sub_id = int(sub_id_str)
     tg_id = call.from_user.id
-
-    # проверим, что подписка реально принадлежит пользователю
-    async with async_session() as session:
-        res = await session.execute(
-            select(Subscribers).where(Subscribers.id == sub_id, Subscribers.tg_id == tg_id)
-        )
-        sub = res.scalar_one_or_none()
-
-    if not sub:
-        await call.answer("❌ Подписка не найдена.", show_alert=True)
-        return
 
     if plan not in PLAN_TO_MONTHS:
         await call.answer("❌ Неизвестный тариф.", show_alert=True)
         return
 
-    price = plan_to_price(plan)
-    payload = f"renew|{plan}|{sub_id}"
+    async with async_session() as session:
+        sub_res = await session.execute(
+            select(Subscribers).where(Subscribers.id == sub_id, Subscribers.tg_id == tg_id)
+        )
+        sub = sub_res.scalar_one_or_none()
+        if not sub:
+            await call.answer("❌ Подписка не найдена.", show_alert=True)
+            return
 
-    # чек для провайдера (ЮKassa/CloudPayments и т.п. — в зависимости от токена)
-    PROVIDER_DATA = {
-        "receipt": {
-            "items": [{
-                "description": plan_to_label(plan),
-                "quantity": "1.00",
-                "amount": {"value": f"{price}.00", "currency": "RUB"},
-                "vat_code": 1
-            }]
-        }
-    }
+        discount = await get_active_discount_percent(session, tg_id)
+        user_res = await session.execute(select(User).where(User.tg_id == tg_id))
+        user = user_res.scalar_one_or_none()
+        bonus_balance = int(getattr(user, "bonus_balance", 0) or 0) if user else 0
 
-    prices = [LabeledPrice(label=plan_to_label(plan), amount=price * 100)]
+    base_price = get_base_price(plan)
+    price_after_discount = apply_discount(base_price, discount)
+    bonus_to_use = calc_bonus_to_use(price_after_discount, bonus_balance)
+    final_pay_price = price_after_discount - bonus_to_use
+
+    payload = build_renew_payload(
+        plan=plan,
+        sub_id=sub_id,
+        discount=discount,
+        bonus_used=bonus_to_use,
+    )
+
+    receipt_desc = RENEW_LABELS[plan]
+    if discount > 0:
+        receipt_desc = f"{receipt_desc} (скидка {discount}%)"
+    provider_data = build_provider_data(receipt_desc, final_pay_price)
+    prices = [LabeledPrice(label=RENEW_LABELS[plan], amount=final_pay_price * 100)]
+
+    details: list[str] = []
+    if discount > 0:
+        details.append(f"✅ Применена скидка {discount}%")
+    if bonus_to_use > 0:
+        details.append(f"💰 Списано бонусов: {bonus_to_use} ₽")
+
+    description = (
+        "Оплата картой в Telegram 💳.\n"
+        "В поле электронная почта укажите СВОЮ почту — на неё придёт чек."
+    )
+    if details:
+        description = "\n".join(details) + "\n\n" + description
 
     await call.bot.send_invoice(
         chat_id=call.from_user.id,
-        title=plan_to_title(plan),
-        description=(
-            "Оплата картой в Telegram 💳.\n"
-            "В поле электронная почта укажите СВОЮ почту — на неё придёт чек."
-        ),
+        title=RENEW_TITLES[plan],
+        description=description,
         payload=payload,
         provider_token=config.PAYMENT_TOKEN,
         currency="RUB",
@@ -103,129 +109,164 @@ async def create_invoice_for_renew(call: CallbackQuery):
         start_parameter="renew_subscription",
         need_email=True,
         send_email_to_provider=True,
-        provider_data=json.dumps(PROVIDER_DATA),
+        provider_data=json.dumps(provider_data),
     )
 
     await call.answer()
 
-@renew_pay_router.pre_checkout_query(
-    F.invoice_payload.startswith("renew|")
-)
+
+@renew_pay_router.pre_checkout_query(F.invoice_payload.startswith("renew|"))
 async def renew_pre_checkout(pre_checkout_query: PreCheckoutQuery, bot: Bot):
-    payload = pre_checkout_query.invoice_payload
-    parts = payload.split("|")
-
-    # ожидаем: renew|plan|sub_id
-    if len(parts) != 3 or parts[0] != "renew":
+    try:
+        plan, sub_id, _, _ = parse_renew_payload(pre_checkout_query.invoice_payload)
+    except ValueError:
         await bot.answer_pre_checkout_query(
             pre_checkout_query.id,
             ok=False,
-            error_message="Некорректные данные платежа."
+            error_message="Некорректные данные платежа.",
         )
         return
 
-    _, plan, sub_id_str = parts
-    if plan not in PLAN_TO_MONTHS or not sub_id_str.isdigit():
+    if plan not in PLAN_TO_MONTHS:
         await bot.answer_pre_checkout_query(
             pre_checkout_query.id,
             ok=False,
-            error_message="Некорректные данные платежа."
+            error_message="Некорректные данные платежа.",
         )
         return
-
-    sub_id = int(sub_id_str)
 
     async with async_session() as session:
-        res = await session.execute(select(Subscribers).where(Subscribers.id == sub_id))
+        res = await session.execute(
+            select(Subscribers).where(
+                Subscribers.id == sub_id,
+                Subscribers.tg_id == pre_checkout_query.from_user.id,
+            )
+        )
         sub = res.scalar_one_or_none()
 
     if not sub:
         await bot.answer_pre_checkout_query(
             pre_checkout_query.id,
             ok=False,
-            error_message="Подписка не найдена."
+            error_message="Подписка не найдена.",
         )
         return
 
     await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
 
-@renew_pay_router.message(
-    F.successful_payment.invoice_payload.startswith("renew|")
-)
+
+@renew_pay_router.message(F.successful_payment.invoice_payload.startswith("renew|"))
 async def handle_renew_success(message: Message):
-    payload = message.successful_payment.invoice_payload
-    parts = payload.split("|")
-
-    # пропускаем НЕ renew-платежи (чтобы не конфликтовать с твоим buy-router)
-    if len(parts) != 3 or parts[0] != "renew":
+    try:
+        plan, sub_id, discount_from_payload, bonus_reserved = parse_renew_payload(
+            message.successful_payment.invoice_payload
+        )
+    except ValueError:
         return
 
-    _, plan, sub_id_str = parts
-    if plan not in PLAN_TO_MONTHS or not sub_id_str.isdigit():
+    if plan not in PLAN_TO_MONTHS:
         return
 
-    sub_id = int(sub_id_str)
     tg_id = message.from_user.id
     username = message.from_user.username or "unknown"
-    price = message.successful_payment.total_amount / 100
+    paid_rub = int(message.successful_payment.total_amount / 100)
     provider_payment_charge_id = message.successful_payment.provider_payment_charge_id
 
     months = PLAN_TO_MONTHS[plan]
     today = date.today()
 
-    server_region = None
-    server_region_id = None
-    new_expiry = None
-
     async with async_session() as session:
-        # найдём подписку
-        res = await session.execute(
+        prev_payments_count = await get_user_payments_count(session, tg_id)
+        is_first_payment = prev_payments_count == 0
+
+        user_res = await session.execute(select(User).where(User.tg_id == tg_id))
+        user = user_res.scalar_one_or_none()
+        if not user:
+            await message.answer("❌ Пользователь не найден.")
+            return
+
+        sub_res = await session.execute(
             select(Subscribers).where(Subscribers.id == sub_id, Subscribers.tg_id == tg_id)
         )
-        sub = res.scalar_one_or_none()
+        sub = sub_res.scalar_one_or_none()
         if not sub:
             await message.answer("❌ Подписка не найдена.")
             return
 
-        server_region = sub.server_region
-        server_region_id = sub.server_region_id
-
-        # старт продления: от текущей даты окончания, либо от сегодня если уже просрочено
-        current_expiry = sub.expiry_date
-        if isinstance(current_expiry, datetime):
-            current_expiry = current_expiry.date()
-        elif isinstance(current_expiry, str):
-            try:
-                current_expiry = datetime.strptime(current_expiry, "%Y-%m-%d").date()
-            except (ValueError, TypeError):
-                current_expiry = None
-
+        current_expiry = parse_date_value(sub.expiry_date)
         base_date = current_expiry if current_expiry and current_expiry >= today else today
         new_expiry = add_months(base_date, months)
 
-        # запись платежа (адаптируй поля под свою модель Payments)
-        new_payment = Payments(
-            tg_id=tg_id,
-            username=username,
-            price=price,
-            date=datetime.now(),
-            tarific_plan=plan,
-            provider_payment_charge_id=provider_payment_charge_id,
-        )
-        session.add(new_payment)
+        base_price = get_base_price(plan)
+        current_bonus = int(getattr(user, "bonus_balance", 0) or 0)
+        price_after_discount = apply_discount(base_price, int(discount_from_payload or 0))
+        max_bonus_allowed = calc_bonus_to_use(price_after_discount, current_bonus)
+        bonus_to_spend = min(int(bonus_reserved or 0), int(max_bonus_allowed), int(current_bonus))
 
-        # обновим подписку
+        if price_after_discount - bonus_to_spend < MIN_PAY_RUB:
+            bonus_to_spend = max(0, price_after_discount - MIN_PAY_RUB)
+
+        if bonus_to_spend > 0:
+            user.bonus_balance = current_bonus - bonus_to_spend
+
+        session.add(
+            Payments(
+                tg_id=tg_id,
+                username=username,
+                price=paid_rub,
+                date=datetime.now(),
+                tarific_plan=plan,
+                provider_payment_charge_id=provider_payment_charge_id,
+            )
+        )
+
         await session.execute(
             update(Subscribers)
             .where(Subscribers.id == sub_id)
-            .values(expiry_date=new_expiry)
+            .values(
+                expiry_date=new_expiry.isoformat(),
+                subscription=plan,
+                notif_oneday=False,
+            )
         )
+
+        await mark_promo_used_if_applicable(session, tg_id, is_first_payment)
         await session.commit()
+
+        server_region = sub.server_region
+        server_region_id = sub.server_region_id
+        file_name = sub.file_name
+        was_expired = current_expiry is None or current_expiry < today
+
+    restore_message = ""
+    if was_expired:
+        async with async_session() as session:
+            srv_res = await session.execute(
+                select(Server).where(
+                    Server.region == server_region,
+                    Server.region_id == server_region_id,
+                    Server.is_active == True,  # noqa: E712
+                )
+            )
+            server = srv_res.scalar_one_or_none()
+
+        if not server:
+            restore_message = "\n⚠️ Сервер для восстановления конфигурации недоступен. Напишите в поддержку."
+        else:
+            try:
+                url = f"https://{server.host_ip}:{server.port}"
+                await add_client_wg(file_name, url, server.password)
+                await get_config_wg(file_name, url, server.password)
+                await message.answer_document(FSInputFile(f"app/auth/{file_name}.conf"))
+            except Exception:
+                restore_message = "\n⚠️ Не удалось автоматически восстановить конфигурацию. Напишите в поддержку."
 
     await message.answer(
         "✅ <b>Подписка продлена!</b>\n\n"
         f"📍 <b>Сервер:</b> {server_region} №{server_region_id}\n"
-        f"💳 <b>Тариф:</b> {plan}\n"
-        f"⏳ <b>Активна до:</b> <b>{new_expiry}</b>",
-        parse_mode="HTML"
+        f"💳 <b>Тариф:</b> {RENEW_LABELS[plan]}\n"
+        f"💰 <b>Списано бонусов:</b> {bonus_to_spend} ₽\n"
+        f"⏳ <b>Активна до:</b> <b>{new_expiry.isoformat()}</b>"
+        f"{restore_message}",
+        parse_mode="HTML",
     )

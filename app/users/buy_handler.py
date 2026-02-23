@@ -5,10 +5,9 @@ from sqlalchemy import select
 
 import app.users.keyboard as kb
 from app.addons.button_text import BUTTON_TEXTS
+from app.addons.utilits import build_tariff_caption
 from app.database.models import async_session, Server
-
-from config import one_mounth_fake_price, one_mounth_price, twelve_mounth_fake_price, six_mounth_price, \
-    twelve_mounth_price, six_mounth_fake_price
+from app.payments.pricing import get_active_discount_percent
 
 user_buy_router = Router()
 
@@ -18,7 +17,7 @@ async def help_main_button(message: Message):
     async with async_session() as session:
         keyboard = await kb.get_servers_keyboard(session)
         await message.answer(
-            "<b>Выберите сервер</b>",
+            "🌍 <b>Выберите сервер</b>, и я сразу покажу актуальные тарифы.",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
@@ -51,13 +50,12 @@ async def handle_server_selection(callback: CallbackQuery):
             await callback.answer("❌ Сервер не найден или недоступен.", show_alert=True)
             return
 
-    # Формируем caption
-    caption_text = (
-        "🛡️ <b>Wireguard VPN</b>\n\n"
-        f"📍 <b>Сервер:</b> {server.region} №{server.region_id}\n\n"
-        f"📅 <b>1 мес.</b> — <s>{one_mounth_fake_price} руб.</s>   <b>{one_mounth_price} руб.</b>\n"
-        f"📅 <b>6 мес.</b> — <s>{six_mounth_fake_price} руб.</s>   <b>{six_mounth_price} руб.</b>\n"
-        f"📅 <b>12 мес.</b> — <s>{twelve_mounth_fake_price} руб.</s>   <b>{twelve_mounth_price} руб.</b>"
+        discount_percent = await get_active_discount_percent(session, callback.from_user.id)
+
+    caption_text = build_tariff_caption(
+        server_region=server.region,
+        server_region_id=server.region_id,
+        discount_percent=discount_percent,
     )
 
     photo = FSInputFile("app/Pictures/WireGuard_ logo.jpeg")

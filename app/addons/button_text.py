@@ -1,9 +1,9 @@
 BUTTON_TEXTS = {
     # Главное меню
-    "products": "Товары",
-    "my_subs": "Мои подписки",
+    "products": "Оформить VPN 🚀",
+    "my_subs": "Мои подключения 🔐",
     "how_connect": "Как подключить ⚙️",
-    "promocode": "Промокод",
+    "promocode": "Активировать промокод 🎟",
     "invite_friend": "Пригласить друга",
     "help": "Помощь 🆘",
     "about": "О VPN ℹ️",
@@ -48,6 +48,7 @@ BUTTON_TEXTS = {
     "broadcast": "Рассылка",
     "statistics": "Статистика",
     "add_server": "Добавить сервер",
+    "add_promocode": "Добавить промокод",
     "manage_subs": "Администрирование подписок",
     "ping_servers": "Пинг серверов",
     "admin_back": "Назад (Админ)",
