@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import BigInteger, String, Boolean, UniqueConstraint, DateTime, Integer, ForeignKey
+from sqlalchemy import BigInteger, String, Boolean, UniqueConstraint, DateTime, Integer, ForeignKey, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 
@@ -9,7 +9,7 @@ import config
 engine = create_async_engine(url=config.DB_URL_USERS)
 
 
-async_session = async_sessionmaker(engine)
+async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 class Base(AsyncAttrs, DeclarativeBase):
     pass
@@ -105,6 +105,7 @@ class PromoCode(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     first_purchase_only: Mapped[bool] = mapped_column(Boolean, default=True)
     max_uses_per_user: Mapped[int] = mapped_column(Integer, default=1)  # 1 = одноразовый
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -127,5 +128,3 @@ class PromoRedemption(Base):
 async def async_main():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-
-

@@ -187,6 +187,7 @@ async def get_active_discount_percent(session, tg_id: int) -> int:
             PromoRedemption.user_tg_id == tg_id,
             PromoRedemption.is_activated == True,  # noqa: E712
             PromoCode.is_active == True,  # noqa: E712
+            PromoCode.expires_at > datetime.utcnow(),
         )
         .order_by(PromoRedemption.id.desc())
         .limit(1)
@@ -216,6 +217,7 @@ async def mark_promo_used_if_applicable(session, tg_id: int, is_first_payment: b
             PromoRedemption.user_tg_id == tg_id,
             PromoRedemption.is_activated == True,  # noqa: E712
             PromoCode.is_active == True,  # noqa: E712
+            PromoCode.expires_at > datetime.utcnow(),
         )
         .order_by(PromoRedemption.id.desc())
         .limit(1)

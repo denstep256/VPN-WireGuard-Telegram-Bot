@@ -3,6 +3,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 from sqlalchemy import select
+from datetime import datetime, time
 
 import app.admin.admin_keyboard as admin_kb
 from app.addons.button_text import BUTTON_TEXTS
@@ -19,10 +20,22 @@ class AddPromoState(StatesGroup):
     waiting_first_purchase_only = State()
     waiting_max_uses = State()
     waiting_owner = State()
+    waiting_expiry_date = State()
 
 
 def _is_admin(user_id: int) -> bool:
     return user_id == int(ADMIN_ID)
+
+
+def _parse_expiry_input(raw_text: str | None) -> datetime | None:
+    text = (raw_text or "").strip()
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d"):
+        try:
+            parsed_date = datetime.strptime(text, fmt).date()
+            return datetime.combine(parsed_date, time(hour=23, minute=59, second=59))
+        except ValueError:
+            continue
+    return None
 
 
 @admin_add_promo_router.message(F.text == BUTTON_TEXTS["add_promocode"])
@@ -122,7 +135,37 @@ async def add_promo_owner(message: Message, state: FSMContext):
     owner_id_raw = int(text)
     owner_tg_id = None if owner_id_raw == 0 else owner_id_raw
 
+    await state.update_data(owner_tg_id=owner_tg_id)
+    await state.set_state(AddPromoState.waiting_expiry_date)
+    await message.answer(
+        "Введите дату окончания промокода.\n"
+        "Формат: <code>ДД.ММ.ГГГГ</code> или <code>YYYY-MM-DD</code>.\n"
+        "Промокод не может быть бессрочным.",
+        parse_mode="HTML",
+    )
+
+
+@admin_add_promo_router.message(AddPromoState.waiting_expiry_date)
+async def add_promo_expiry_date(message: Message, state: FSMContext):
+    if not _is_admin(message.from_user.id):
+        await state.clear()
+        await message.answer("У вас нет доступа")
+        return
+
+    expires_at = _parse_expiry_input(message.text)
+    if not expires_at:
+        await message.answer(
+            "❌ Некорректная дата. Используйте формат <code>ДД.ММ.ГГГГ</code> или <code>YYYY-MM-DD</code>.",
+            parse_mode="HTML",
+        )
+        return
+
+    if expires_at <= datetime.utcnow():
+        await message.answer("❌ Дата окончания должна быть позже текущего момента.")
+        return
+
     data = await state.get_data()
+    owner_tg_id = data.get("owner_tg_id")
     async with async_session() as session:
         promo = PromoCode(
             code=data["code"],
@@ -131,6 +174,7 @@ async def add_promo_owner(message: Message, state: FSMContext):
             is_active=True,
             first_purchase_only=data["first_purchase_only"],
             max_uses_per_user=data["max_uses_per_user"],
+            expires_at=expires_at,
         )
         session.add(promo)
         await session.commit()
@@ -142,9 +186,8 @@ async def add_promo_owner(message: Message, state: FSMContext):
         f"Скидка: <b>{data['discount_percent']}%</b>\n"
         f"Только первая оплата: <b>{'да' if data['first_purchase_only'] else 'нет'}</b>\n"
         f"Лимит на пользователя: <b>{data['max_uses_per_user']}</b>\n"
-        f"Персональный: <b>{'да' if owner_tg_id else 'нет'}</b>",
+        f"Персональный: <b>{'да' if owner_tg_id else 'нет'}</b>\n"
+        f"Действует до: <b>{expires_at.date().isoformat()}</b>",
         parse_mode="HTML",
         reply_markup=admin_kb.admin_panel,
     )
-# TODO: Промокды всегда одноразовые, добавить дату годности промокода (промокд не может быть на бесконечное время). Для рефераллов по умолчанию - год, для самописных промокодов - дату окончания промокода вводим при создании в админ-панели.
-

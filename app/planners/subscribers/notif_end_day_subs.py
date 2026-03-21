@@ -2,16 +2,17 @@ from datetime import date
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select, update
+import logging
 
 from app.addons.utilits import delete_file_by_name, parse_date_value
 from app.database.models import Server, Subscribers, async_session
+from app.planners.scheduler_runtime import get_scheduler
 from app.wg_api.wg_api import remove_client_wg
 
 
-_scheduler: AsyncIOScheduler | None = None
+logger = logging.getLogger(__name__)
 
 
 async def check_subscriptions_subs(bot: Bot):
@@ -53,7 +54,11 @@ async def check_subscriptions_subs(bot: Bot):
                     reply_markup=renew_kb,
                 )
             except Exception:
-                pass
+                logger.exception(
+                    "Failed to send end-day subscription notification: sub_id=%s tg_id=%s",
+                    subscription.id,
+                    subscription.tg_id,
+                )
 
             delete_file_by_name(subscription.file_name)
 
@@ -85,16 +90,12 @@ async def check_subscriptions_subs(bot: Bot):
 
 
 def setup_scheduler_subs_notif_end_day(bot: Bot):
-    global _scheduler
-    if _scheduler and _scheduler.running:
-        return
-
-    _scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
-    _scheduler.add_job(
+    scheduler = get_scheduler()
+    scheduler.add_job(
         check_subscriptions_subs,
         trigger=CronTrigger(hour=11, minute=0),
         id="check_subscriptions_subs_endday",
         kwargs={"bot": bot},
         replace_existing=True,
     )
-    _scheduler.start()
+    logger.info("Scheduler job registered: check_subscriptions_subs_endday (11:00 Europe/Moscow)")

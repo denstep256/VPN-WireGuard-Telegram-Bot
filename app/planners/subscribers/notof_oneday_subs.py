@@ -1,16 +1,17 @@
+import logging
 from datetime import date, timedelta
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select, update
 
 from app.addons.utilits import parse_date_value
 from app.database.models import Subscribers, async_session
+from app.planners.scheduler_runtime import get_scheduler
 
 
-_scheduler: AsyncIOScheduler | None = None
+logger = logging.getLogger(__name__)
 
 
 async def check_subscriptions(bot: Bot):
@@ -58,22 +59,23 @@ async def check_subscriptions(bot: Bot):
                     .values(notif_oneday=True)
                 )
             except Exception:
+                logger.exception(
+                    "Failed to send 1-day subscription notification: sub_id=%s tg_id=%s",
+                    subscription.id,
+                    subscription.tg_id,
+                )
                 continue
 
         await session.commit()
 
 
 def setup_scheduler_subs_notif_oneday(bot: Bot):
-    global _scheduler
-    if _scheduler and _scheduler.running:
-        return
-
-    _scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
-    _scheduler.add_job(
+    scheduler = get_scheduler()
+    scheduler.add_job(
         check_subscriptions,
         trigger=CronTrigger(hour=10, minute=0),
         id="check_subscriptions_oneday",
         kwargs={"bot": bot},
         replace_existing=True,
     )
-    _scheduler.start()
+    logger.info("Scheduler job registered: check_subscriptions_oneday (10:00 Europe/Moscow)")

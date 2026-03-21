@@ -1,15 +1,16 @@
 from datetime import date, timedelta
 
 from aiogram import Bot
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select, update
+import logging
 
 from app.addons.utilits import parse_date_value
 from app.database.models import Subscribers, TestPeriod, async_session
+from app.planners.scheduler_runtime import get_scheduler
 
 
-_scheduler: AsyncIOScheduler | None = None
+logger = logging.getLogger(__name__)
 
 
 async def update_static(bot: Bot):
@@ -46,16 +47,12 @@ async def update_static(bot: Bot):
 
 
 def setup_scheduler_update_static(bot: Bot):
-    global _scheduler
-    if _scheduler and _scheduler.running:
-        return
-
-    _scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
-    _scheduler.add_job(
+    scheduler = get_scheduler()
+    scheduler.add_job(
         update_static,
         trigger=IntervalTrigger(hours=4),
         id="update_static",
         kwargs={"bot": bot},
         replace_existing=True,
     )
-    _scheduler.start()
+    logger.info("Scheduler job registered: update_static (every 4 hours)")

@@ -1,6 +1,7 @@
 import config
 import asyncio
 
+from app.addons.logging_setup import setup_logging
 from app.admin.admin_commands_add_server import admin_command_add_server_router
 from app.admin.admin_commands_add_promocode import admin_add_promo_router
 from app.admin.admin_commands_pinger import admin_pinger_router
@@ -29,6 +30,7 @@ from app.planners.trial_planner.notif_oneday import setup_scheduler_trial_notif_
 
 
 async def main():
+    setup_logging()
     await async_main()
     #Включение бота
     bot = Bot(token=config.TOKEN)
@@ -62,4 +64,3 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
-

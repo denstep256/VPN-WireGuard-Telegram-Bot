@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from aiogram import F, Router
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
@@ -29,6 +31,16 @@ async def promo_entered(message: Message, state: FSMContext):
 
         if not promo or not promo.is_active:
             await message.answer("❌ Промокод не найден или отключён.", reply_markup=kb.get_main_keyboard(message.from_user.id))
+            await state.clear()
+            return
+
+        if not promo.expires_at or promo.expires_at <= datetime.utcnow():
+            promo.is_active = False
+            await session.commit()
+            await message.answer(
+                "⚠️ Срок действия этого промокода уже истёк.",
+                reply_markup=kb.get_main_keyboard(message.from_user.id),
+            )
             await state.clear()
             return
 

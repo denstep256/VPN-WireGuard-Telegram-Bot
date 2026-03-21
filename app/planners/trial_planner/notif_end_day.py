@@ -1,17 +1,18 @@
 from datetime import date
 
 from aiogram import Bot
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select, update
+import logging
 
 from app.addons.utilits import delete_file_by_name, parse_date_value
 from app.database.models import Server, TestPeriod, async_session
+from app.planners.scheduler_runtime import get_scheduler
 from app.users.handlers import texts_for_bot
 from app.wg_api.wg_api import remove_client_wg
 
 
-_scheduler: AsyncIOScheduler | None = None
+logger = logging.getLogger(__name__)
 
 
 async def check_subscriptions_trial(bot: Bot):
@@ -36,7 +37,11 @@ async def check_subscriptions_trial(bot: Bot):
                     parse_mode="HTML",
                 )
             except Exception:
-                pass
+                logger.exception(
+                    "Failed to send end-day trial notification: trial_id=%s tg_id=%s",
+                    trial.id,
+                    trial.tg_id,
+                )
 
             delete_file_by_name(trial.file_name)
 
@@ -60,16 +65,12 @@ async def check_subscriptions_trial(bot: Bot):
 
 
 def setup_scheduler_trial_notif_end_day(bot: Bot):
-    global _scheduler
-    if _scheduler and _scheduler.running:
-        return
-
-    _scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
-    _scheduler.add_job(
+    scheduler = get_scheduler()
+    scheduler.add_job(
         check_subscriptions_trial,
         trigger=CronTrigger(hour=11, minute=15),
         id="check_subscriptions_trial_endday",
         kwargs={"bot": bot},
         replace_existing=True,
     )
-    _scheduler.start()
+    logger.info("Scheduler job registered: check_subscriptions_trial_endday (11:15 Europe/Moscow)")

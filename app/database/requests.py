@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 from app.database.models import async_session, Referral, PromoCode, PromoRedemption
 from app.database.models import User
 from sqlalchemy import select
@@ -48,6 +50,7 @@ async def set_user_start(tg_id, username, first_name, date_add, start_arg: str |
 
                 # 1) создать персональный промокод (на будущее: owner_tg_id != None)
                 promo_code = await generate_unique_promo_code(session, prefix="REF10-")
+                promo_expires_at = datetime.utcnow() + timedelta(days=365)
                 promo = PromoCode(
                     code=promo_code,
                     discount_percent=10,
@@ -55,6 +58,7 @@ async def set_user_start(tg_id, username, first_name, date_add, start_arg: str |
                     is_active=True,
                     first_purchase_only=True,
                     max_uses_per_user=1,
+                    expires_at=promo_expires_at,
                 )
                 session.add(promo)
                 await session.flush()
@@ -72,6 +76,7 @@ async def set_user_start(tg_id, username, first_name, date_add, start_arg: str |
                     "🎟 <b>Промокод для вас</b>\n\n"
                     "Вы пришли по приглашению — держите скидку <b>10%</b> на <b>первую оплату</b>.\n\n"
                     f"Ваш промокод: <code>{promo_code}</code>\n\n"
+                    f"Действует до: <b>{promo_expires_at.date().isoformat()}</b>\n\n"
                     "Нажмите кнопку <b>Промокод</b> и введите его перед покупкой."
                 )
 
