@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from datetime import datetime
 from typing import Optional
 
@@ -30,6 +31,7 @@ from app.payments.pricing import (
 from app.wg_api.wg_api import add_client_wg, get_config_wg
 
 pay_router = Router()
+logger = logging.getLogger(__name__)
 
 
 def _parse_callback_data(data: str) -> tuple[Optional[str], Optional[str], Optional[int]]:
@@ -78,7 +80,11 @@ async def _apply_referral_bonus_if_applicable(session, buyer_tg_id: int, bot: Bo
             parse_mode="HTML",
         )
     except Exception:
-        pass
+        logger.exception(
+            "Ошибка отправки уведомления рефералу: buyer_tg_id=%s inviter_tg_id=%s",
+            buyer_tg_id,
+            inviter_tg_id,
+        )
 
 
 async def _send_invoice(
@@ -205,6 +211,11 @@ async def handle_successful_payment(message: Message):
             message.successful_payment.invoice_payload
         )
     except ValueError:
+        logger.error(
+            "Некорректный payload успешного платежа: tg_id=%s payload=%s",
+            message.from_user.id if message.from_user else None,
+            message.successful_payment.invoice_payload,
+        )
         await message.answer("❌ Некорректный payload платежа.")
         return
 
@@ -220,6 +231,12 @@ async def handle_successful_payment(message: Message):
         user_result = await session.execute(select(User).where(User.tg_id == tg_id))
         user = user_result.scalar_one_or_none()
         if not user:
+            logger.error(
+                "Пользователь не найден при обработке успешного платежа: tg_id=%s plan=%s payment_charge_id=%s",
+                tg_id,
+                plan,
+                provider_payment_charge_id,
+            )
             await message.answer("❌ Пользователь не найден.")
             return
 
@@ -265,6 +282,14 @@ async def handle_successful_payment(message: Message):
 
         server = await _get_server(session, region, region_id)
         if not server:
+            logger.error(
+                "Сервер недоступен после успешного платежа: tg_id=%s plan=%s region=%s region_id=%s payment_charge_id=%s",
+                tg_id,
+                plan,
+                region,
+                region_id,
+                provider_payment_charge_id,
+            )
             await session.rollback()
             await message.answer(
                 "⚠️ Оплата прошла, но сервер недоступен. Напишите в поддержку, мы вручную выдадим доступ."
@@ -279,6 +304,15 @@ async def handle_successful_payment(message: Message):
             await get_config_wg(client_name, ip, password)
             await asyncio.sleep(1)
         except Exception:
+            logger.exception(
+                "Ошибка выдачи WG-конфига после успешной оплаты: tg_id=%s sub_id=%s client=%s region=%s region_id=%s payment_charge_id=%s",
+                tg_id,
+                new_subscriber.id,
+                client_name,
+                region,
+                region_id,
+                provider_payment_charge_id,
+            )
             await session.rollback()
             await message.answer(
                 "⚠️ Оплата прошла, но произошла ошибка выдачи конфигурации. Напишите в поддержку."
@@ -296,6 +330,20 @@ async def handle_successful_payment(message: Message):
             await _apply_referral_bonus_if_applicable(session, tg_id, message.bot)
 
         await session.commit()
+        logger.info(
+            "Успешная покупка подписки: tg_id=%s username=%s sub_id=%s plan=%s amount_rub=%s bonus_spent=%s discount=%s region=%s region_id=%s expiry=%s payment_charge_id=%s",
+            tg_id,
+            username,
+            new_subscriber.id,
+            plan,
+            paid_rub,
+            bonus_to_spend,
+            discount_from_payload,
+            region,
+            region_id,
+            expiry_date.isoformat(),
+            provider_payment_charge_id,
+        )
 
     file_path = f"app/auth/{client_name}.conf"
     await message.answer(

@@ -1,10 +1,13 @@
 from datetime import datetime, timedelta
+import logging
 
-from sqlalchemy import BigInteger, String, Boolean, UniqueConstraint, DateTime, Integer, ForeignKey, inspect, text
+from sqlalchemy import BigInteger, String, Boolean, UniqueConstraint, DateTime, Integer, ForeignKey, inspect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 
 import config
+
+logger = logging.getLogger(__name__)
 
 engine = create_async_engine(url=config.DB_URL_USERS)
 
@@ -126,5 +129,16 @@ class PromoRedemption(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 async def async_main():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    try:
+        logger.info("Database initialization started: create_all for declared models.")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            table_names = await conn.run_sync(lambda sync_conn: inspect(sync_conn).get_table_names())
+        logger.info(
+            "Database initialization completed: %s tables ensured (%s).",
+            len(table_names),
+            ", ".join(sorted(table_names)),
+        )
+    except Exception:
+        logger.exception("Database initialization failed while creating tables.")
+        raise

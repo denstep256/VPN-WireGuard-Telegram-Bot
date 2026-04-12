@@ -1,3 +1,4 @@
+import logging
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -12,6 +13,7 @@ from config import ADMIN_ID
 
 
 admin_add_promo_router = Router()
+logger = logging.getLogger(__name__)
 
 
 class AddPromoState(StatesGroup):
@@ -36,6 +38,11 @@ def _parse_expiry_input(raw_text: str | None) -> datetime | None:
         except ValueError:
             continue
     return None
+
+
+def _admin_actor(user) -> str:
+    username = user.username or "-"
+    return f"{user.id} (@{username})"
 
 
 @admin_add_promo_router.message(F.text == BUTTON_TEXTS["add_promocode"])
@@ -166,20 +173,40 @@ async def add_promo_expiry_date(message: Message, state: FSMContext):
 
     data = await state.get_data()
     owner_tg_id = data.get("owner_tg_id")
-    async with async_session() as session:
-        promo = PromoCode(
-            code=data["code"],
-            discount_percent=data["discount_percent"],
-            owner_tg_id=owner_tg_id,
-            is_active=True,
-            first_purchase_only=data["first_purchase_only"],
-            max_uses_per_user=data["max_uses_per_user"],
-            expires_at=expires_at,
+    try:
+        async with async_session() as session:
+            promo = PromoCode(
+                code=data["code"],
+                discount_percent=data["discount_percent"],
+                owner_tg_id=owner_tg_id,
+                is_active=True,
+                first_purchase_only=data["first_purchase_only"],
+                max_uses_per_user=data["max_uses_per_user"],
+                expires_at=expires_at,
+            )
+            session.add(promo)
+            await session.commit()
+    except Exception:
+        logger.exception(
+            "Ошибка создания промокода: admin=%s code=%s owner_tg_id=%s",
+            _admin_actor(message.from_user),
+            data.get("code"),
+            owner_tg_id,
         )
-        session.add(promo)
-        await session.commit()
+        await message.answer("❌ Не удалось создать промокод из-за внутренней ошибки.")
+        return
 
     await state.clear()
+    logger.info(
+        "Админ %s создал промокод: code=%s discount=%s%% first_purchase_only=%s max_uses_per_user=%s owner_tg_id=%s expires_at=%s",
+        _admin_actor(message.from_user),
+        data["code"],
+        data["discount_percent"],
+        data["first_purchase_only"],
+        data["max_uses_per_user"],
+        owner_tg_id,
+        expires_at.isoformat(),
+    )
     await message.answer(
         "✅ Промокод создан.\n"
         f"Код: <code>{data['code']}</code>\n"

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import platform
 
 from aiogram import Router, F
@@ -11,6 +12,12 @@ from app.database.models import async_session, Server
 from app.users.keyboard import get_main_keyboard
 
 admin_pinger_router = Router()
+logger = logging.getLogger(__name__)
+
+
+def _admin_actor(user) -> str:
+    username = user.username or "-"
+    return f"{user.id} (@{username})"
 
 async def ping_host(host: str) -> bool:
     """
@@ -34,6 +41,7 @@ async def ping_host(host: str) -> bool:
         await proc.communicate()
         return proc.returncode == 0
     except Exception:
+        logger.exception("Ошибка ping_host для host=%s", host)
         return False
 
 @admin_pinger_router.message(F.text == "Пинг серверов")
@@ -68,4 +76,12 @@ async def ping_servers(message: Message):
         else:
             lines.append(f"❌ <b>{s.region} №{s.region_id}</b> ({s.host_ip})")
 
+    alive_count = sum(1 for is_alive in results if is_alive)
+    logger.info(
+        "Админ %s выполнил пинг серверов: всего=%s доступно=%s недоступно=%s",
+        _admin_actor(message.from_user),
+        len(servers),
+        alive_count,
+        len(servers) - alive_count,
+    )
     await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=get_main_keyboard(message.from_user.id))

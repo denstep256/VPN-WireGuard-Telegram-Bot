@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 
 async def check_subscriptions(bot: Bot):
     tomorrow = date.today() + timedelta(days=1)
+    processed = 0
+    sent = 0
+    failed = 0
 
     async with async_session() as session:
         result = await session.execute(
@@ -27,6 +30,7 @@ async def check_subscriptions(bot: Bot):
             expiry = parse_date_value(subscription.expiry_date)
             if expiry != tomorrow:
                 continue
+            processed += 1
 
             message = (
                 "⏳ <b>Напоминание о подписке</b>\n\n"
@@ -58,7 +62,9 @@ async def check_subscriptions(bot: Bot):
                     .where(Subscribers.id == subscription.id)
                     .values(notif_oneday=True)
                 )
+                sent += 1
             except Exception:
+                failed += 1
                 logger.exception(
                     "Failed to send 1-day subscription notification: sub_id=%s tg_id=%s",
                     subscription.id,
@@ -67,13 +73,20 @@ async def check_subscriptions(bot: Bot):
                 continue
 
         await session.commit()
+    logger.info(
+        "Scheduler run check_subscriptions_oneday finished: processed=%s sent=%s failed=%s target_date=%s",
+        processed,
+        sent,
+        failed,
+        tomorrow.isoformat(),
+    )
 
 
 def setup_scheduler_subs_notif_oneday(bot: Bot):
     scheduler = get_scheduler()
     scheduler.add_job(
         check_subscriptions,
-        trigger=CronTrigger(hour=10, minute=0),
+        trigger=CronTrigger(hour=18, minute=57),
         id="check_subscriptions_oneday",
         kwargs={"bot": bot},
         replace_existing=True,

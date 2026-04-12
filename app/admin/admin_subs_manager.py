@@ -1,5 +1,6 @@
 import os
 import asyncio
+import logging
 from datetime import datetime, timedelta
 
 from aiogram import Router, F
@@ -16,6 +17,7 @@ from app.wg_api.wg_api import add_client_wg, get_config_wg, remove_client_wg
 from config import ADMIN_ID
 
 admin_subs_router = Router()
+logger = logging.getLogger(__name__)
 
 DATE_FMT = "%Y-%m-%d"
 ALLOWED_MONTHS = (1, 3, 6, 12)
@@ -24,6 +26,11 @@ PER_PAGE = 8
 
 def is_admin(user_id: int) -> bool:
     return user_id == int(ADMIN_ID)
+
+
+def _admin_actor(user) -> str:
+    username = user.username or "-"
+    return f"{user.id} (@{username})"
 
 
 def parse_identifier(text: str) -> tuple[str, str]:
@@ -341,47 +348,71 @@ async def create_new_finish(call: CallbackQuery, state: FSMContext):
     subscription_type = determine_subscription_type(months * 30)
     client_name = generate_client_name()
 
-    async with async_session() as session:
-        ures = await session.execute(select(User).where(User.tg_id == tg_id))
-        user = ures.scalar_one_or_none()
-        username = user.username if user else None
+    try:
+        async with async_session() as session:
+            ures = await session.execute(select(User).where(User.tg_id == tg_id))
+            user = ures.scalar_one_or_none()
+            username = user.username if user else None
 
-        sres = await session.execute(
-            select(Server).where(Server.region == region, Server.region_id == region_id, Server.is_active == True)
+            sres = await session.execute(
+                select(Server).where(Server.region == region, Server.region_id == region_id, Server.is_active == True)
+            )
+            server = sres.scalar_one_or_none()
+            if not server:
+                await call.message.answer("Сервер не найден или не активен.")
+                await call.answer()
+                return
+
+            new_sub = Subscribers(
+                tg_id=tg_id,
+                username=username,
+                file_name="check_manual",
+                subscription=subscription_type,
+                expiry_date=expiry_date,
+                server_region=region,
+                server_region_id=region_id,
+                notif_oneday=False,
+                note="manual_add",
+            )
+            session.add(new_sub)
+            await session.flush()
+            new_sub_id = int(new_sub.id)
+
+            url = f"https://{server.host_ip}:{server.port}"
+            password = server.password
+
+            await add_client_wg(client_name, url, password)
+            await get_config_wg(client_name, url, password)
+            await asyncio.sleep(1)
+
+            await session.execute(
+                update(Subscribers).where(Subscribers.id == new_sub_id).values(file_name=client_name)
+            )
+            await session.commit()
+    except Exception:
+        logger.exception(
+            "Ошибка ручной выдачи подписки: admin=%s target_tg_id=%s region=%s region_id=%s months=%s",
+            _admin_actor(call.from_user),
+            tg_id,
+            region,
+            region_id,
+            months,
         )
-        server = sres.scalar_one_or_none()
-        if not server:
-            await call.message.answer("Сервер не найден или не активен.")
-            await call.answer()
-            return
+        await call.message.answer("❌ Не удалось создать подписку из-за внутренней ошибки.")
+        await call.answer()
+        return
 
-        new_sub = Subscribers(
-            tg_id=tg_id,
-            username=username,
-            file_name="check_manual",
-            subscription=subscription_type,
-            expiry_date=expiry_date,
-            server_region=region,
-            server_region_id=region_id,
-            notif_oneday=False,
-            note="manual_add",
-        )
-        session.add(new_sub)
-        await session.flush()
-        new_sub_id = int(new_sub.id)
-
-        url = f"https://{server.host_ip}:{server.port}"
-        password = server.password
-
-        await add_client_wg(client_name, url, password)
-        await get_config_wg(client_name, url, password)
-        await asyncio.sleep(1)
-
-        await session.execute(
-            update(Subscribers).where(Subscribers.id == new_sub_id).values(file_name=client_name)
-        )
-        await session.commit()
-
+    logger.info(
+        "Админ %s выдал подписку: target_tg_id=%s sub_id=%s region=%s region_id=%s months=%s expiry=%s file=%s",
+        _admin_actor(call.from_user),
+        tg_id,
+        new_sub_id,
+        region,
+        region_id,
+        months,
+        expiry_date,
+        client_name,
+    )
     await call.message.answer(
         f"✅ Подписка создана.\n"
         f"ID: <b>{new_sub_id}</b>\n"
@@ -458,21 +489,41 @@ async def extend_finish(call: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     tg_id = int(data["tg_id"])
 
-    async with async_session() as session:
-        res = await session.execute(select(Subscribers).where(Subscribers.id == sub_id, Subscribers.tg_id == tg_id))
-        sub = res.scalar_one_or_none()
-        if not sub:
-            await call.answer("Подписка не найдена", show_alert=True)
-            return
+    try:
+        async with async_session() as session:
+            res = await session.execute(select(Subscribers).where(Subscribers.id == sub_id, Subscribers.tg_id == tg_id))
+            sub = res.scalar_one_or_none()
+            if not sub:
+                await call.answer("Подписка не найдена", show_alert=True)
+                return
 
-        current_exp = parse_date(sub.expiry_date)
-        new_exp = (current_exp + timedelta(days=months * 30)).strftime(DATE_FMT)
+            current_exp = parse_date(sub.expiry_date)
+            new_exp = (current_exp + timedelta(days=months * 30)).strftime(DATE_FMT)
 
-        await session.execute(
-            update(Subscribers).where(Subscribers.id == sub_id).values(expiry_date=new_exp, note="manual_update")
+            await session.execute(
+                update(Subscribers).where(Subscribers.id == sub_id).values(expiry_date=new_exp, note="manual_update")
+            )
+            await session.commit()
+    except Exception:
+        logger.exception(
+            "Ошибка продления подписки админом: admin=%s target_tg_id=%s sub_id=%s months=%s",
+            _admin_actor(call.from_user),
+            tg_id,
+            sub_id,
+            months,
         )
-        await session.commit()
+        await call.message.answer("❌ Не удалось продлить подписку из-за внутренней ошибки.")
+        await call.answer()
+        return
 
+    logger.info(
+        "Админ %s продлил подписку: target_tg_id=%s sub_id=%s months=%s new_expiry=%s",
+        _admin_actor(call.from_user),
+        tg_id,
+        sub_id,
+        months,
+        new_exp,
+    )
     await call.message.answer(
         f"✅ Подписка <b>{sub_id}</b> продлена на <b>{months}</b> мес.\nНовая дата: <b>{new_exp}</b>",
         parse_mode="HTML",
@@ -538,34 +589,53 @@ async def reduce_finish(message: Message, state: FSMContext):
     tg_id = int(data["tg_id"])
     sub_id = int(data["sub_id"])
 
-    async with async_session() as session:
-        res = await session.execute(select(Subscribers).where(Subscribers.id == sub_id, Subscribers.tg_id == tg_id))
-        sub = res.scalar_one_or_none()
-        if not sub:
-            await message.answer("Подписка не найдена.")
-            await state.clear()
-            return
+    try:
+        async with async_session() as session:
+            res = await session.execute(select(Subscribers).where(Subscribers.id == sub_id, Subscribers.tg_id == tg_id))
+            sub = res.scalar_one_or_none()
+            if not sub:
+                await message.answer("Подписка не найдена.")
+                await state.clear()
+                return
 
-        current_exp = parse_date(sub.expiry_date)
-        new_exp_dt = current_exp - timedelta(days=days)
+            current_exp = parse_date(sub.expiry_date)
+            new_exp_dt = current_exp - timedelta(days=days)
 
-        # ✅ ВАШЕ ТРЕБОВАНИЕ: если дата уйдет раньше сегодня — это некорректно (не удаляем автоматом)
-        if new_exp_dt.date() < datetime.now().date():
-            await message.answer(
-                f"❌ Некорректно: после уменьшения дата станет <b>{new_exp_dt.strftime(DATE_FMT)}</b>, "
-                f"что раньше сегодняшней.\n"
-                f"Если нужно полностью убрать — используйте кнопку <b>Удалить</b>.",
-                parse_mode="HTML",
+            # ✅ ВАШЕ ТРЕБОВАНИЕ: если дата уйдет раньше сегодня — это некорректно (не удаляем автоматом)
+            if new_exp_dt.date() < datetime.now().date():
+                await message.answer(
+                    f"❌ Некорректно: после уменьшения дата станет <b>{new_exp_dt.strftime(DATE_FMT)}</b>, "
+                    f"что раньше сегодняшней.\n"
+                    f"Если нужно полностью убрать — используйте кнопку <b>Удалить</b>.",
+                    parse_mode="HTML",
+                )
+                return
+
+            new_exp = new_exp_dt.strftime(DATE_FMT)
+
+            await session.execute(
+                update(Subscribers).where(Subscribers.id == sub_id).values(expiry_date=new_exp, note="manual_delite")
             )
-            return
-
-        new_exp = new_exp_dt.strftime(DATE_FMT)
-
-        await session.execute(
-            update(Subscribers).where(Subscribers.id == sub_id).values(expiry_date=new_exp, note="manual_delite")
+            await session.commit()
+    except Exception:
+        logger.exception(
+            "Ошибка уменьшения подписки админом: admin=%s target_tg_id=%s sub_id=%s days=%s",
+            _admin_actor(message.from_user),
+            tg_id,
+            sub_id,
+            days,
         )
-        await session.commit()
+        await message.answer("❌ Не удалось уменьшить подписку из-за внутренней ошибки.")
+        return
 
+    logger.info(
+        "Админ %s уменьшил подписку: target_tg_id=%s sub_id=%s days=%s new_expiry=%s",
+        _admin_actor(message.from_user),
+        tg_id,
+        sub_id,
+        days,
+        new_exp,
+    )
     await message.answer(
         f"✅ Подписка <b>{sub_id}</b> уменьшена на <b>{days}</b> дней.\nНовая дата: <b>{new_exp}</b>",
         parse_mode="HTML",
@@ -634,40 +704,51 @@ async def delete_confirm(call: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     tg_id = int(data["tg_id"])
 
-    # 1) достаем подписку (нужны client_name, region, region_id) + серверные креды
-    async with async_session() as session:
-        res = await session.execute(
-            select(Subscribers).where(Subscribers.id == sub_id, Subscribers.tg_id == tg_id)
-        )
-        sub = res.scalar_one_or_none()
-        if not sub:
-            await call.answer("Подписка не найдена", show_alert=True)
-            await state.set_state(SubsFSM.listing_subs)
-            return
-
-        client_name = sub.file_name
-        region = sub.server_region
-        region_id = sub.server_region_id
-
-        srv_res = await session.execute(
-            select(Server).where(
-                Server.region == region,
-                Server.region_id == region_id,
-                Server.is_active == True
+    try:
+        # 1) достаем подписку (нужны client_name, region, region_id) + серверные креды
+        async with async_session() as session:
+            res = await session.execute(
+                select(Subscribers).where(Subscribers.id == sub_id, Subscribers.tg_id == tg_id)
             )
-        )
-        server = srv_res.scalar_one_or_none()
-        if not server:
-            # всё равно удалим из БД и локальный файл, но WG не тронем
-            url = None
-            password = None
-        else:
-            url = f"https://{server.host_ip}:{server.port}"
-            password = server.password
+            sub = res.scalar_one_or_none()
+            if not sub:
+                await call.answer("Подписка не найдена", show_alert=True)
+                await state.set_state(SubsFSM.listing_subs)
+                return
 
-        # 2) удаляем запись из БД
-        await session.execute(delete(Subscribers).where(Subscribers.id == sub_id))
-        await session.commit()
+            client_name = sub.file_name
+            region = sub.server_region
+            region_id = sub.server_region_id
+
+            srv_res = await session.execute(
+                select(Server).where(
+                    Server.region == region,
+                    Server.region_id == region_id,
+                    Server.is_active == True
+                )
+            )
+            server = srv_res.scalar_one_or_none()
+            if not server:
+                # всё равно удалим из БД и локальный файл, но WG не тронем
+                url = None
+                password = None
+            else:
+                url = f"https://{server.host_ip}:{server.port}"
+                password = server.password
+
+            # 2) удаляем запись из БД
+            await session.execute(delete(Subscribers).where(Subscribers.id == sub_id))
+            await session.commit()
+    except Exception:
+        logger.exception(
+            "Ошибка удаления подписки админом (DB stage): admin=%s target_tg_id=%s sub_id=%s",
+            _admin_actor(call.from_user),
+            tg_id,
+            sub_id,
+        )
+        await call.message.answer("❌ Не удалось удалить подписку из-за внутренней ошибки.")
+        await call.answer()
+        return
 
     # 3) удаляем локальный файл конфига (не критично если нет)
     # пользователь писал app/auth/{client_name}, но обычно .conf — удалим оба варианта
@@ -678,8 +759,11 @@ async def delete_confirm(call: CallbackQuery, state: FSMContext):
                 os.remove(path)
                 removed_local = True
         except Exception:
-            # не падаем из-за файла
-            pass
+            logger.exception(
+                "Ошибка удаления локального файла конфигурации: sub_id=%s path=%s",
+                sub_id,
+                path,
+            )
 
     # 4) удаляем клиента на сервере WG (если сервер найден)
     removed_remote = False
@@ -688,7 +772,12 @@ async def delete_confirm(call: CallbackQuery, state: FSMContext):
             await remove_client_wg(client_name, url, password)
             removed_remote = True
         except Exception:
-            # не роняем бота, просто сообщим
+            logger.exception(
+                "Ошибка удаления клиента на WG: sub_id=%s client=%s url=%s",
+                sub_id,
+                client_name,
+                url,
+            )
             removed_remote = False
 
     msg = [f"🗑 Подписка <b>{sub_id}</b> удалена.", f"Client: <b>{client_name}</b>"]
@@ -700,6 +789,17 @@ async def delete_confirm(call: CallbackQuery, state: FSMContext):
 
     await call.message.answer("\n".join(msg), parse_mode="HTML")
     await call.answer()
+    logger.info(
+        "Админ %s удалил подписку: target_tg_id=%s sub_id=%s client=%s removed_local=%s removed_remote=%s server_region=%s server_region_id=%s",
+        _admin_actor(call.from_user),
+        tg_id,
+        sub_id,
+        client_name,
+        removed_local,
+        removed_remote,
+        region,
+        region_id,
+    )
 
     # вернёмся к списку
     await state.set_state(SubsFSM.listing_subs)
@@ -714,4 +814,5 @@ async def cancel_any(call: CallbackQuery, state: FSMContext):
         return
     await state.clear()
     await call.message.answer("Ок, отменено.")
+    logger.info("Админ %s отменил действие в менеджере подписок.", _admin_actor(call.from_user))
     await call.answer()

@@ -1,5 +1,6 @@
 import config
 import asyncio
+import logging
 
 from app.addons.logging_setup import setup_logging
 from app.admin.admin_commands_add_server import admin_command_add_server_router
@@ -21,11 +22,13 @@ from app.users.trial import trial_router
 from app.admin.admin_commands_sender import admin_command_router
 from app.admin.admin_subs_manager import admin_subs_router
 
-from app.planners.static_planner import setup_scheduler_update_static
+
 from app.planners.subscribers.notif_end_day_subs import setup_scheduler_subs_notif_end_day
 from app.planners.subscribers.notof_oneday_subs import setup_scheduler_subs_notif_oneday
 from app.planners.trial_planner.notif_end_day import setup_scheduler_trial_notif_end_day
 from app.planners.trial_planner.notif_oneday import setup_scheduler_trial_notif_oneday
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -41,7 +44,6 @@ async def main():
     setup_scheduler_trial_notif_end_day(bot)
     setup_scheduler_subs_notif_oneday(bot)
     setup_scheduler_subs_notif_end_day(bot)
-    setup_scheduler_update_static(bot)
 
 
     #Настройка Router
@@ -63,4 +65,8 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception:
+        logger.exception("Bot stopped due to unhandled exception.")
+        raise

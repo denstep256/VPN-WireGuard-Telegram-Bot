@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import date, datetime
 
 import config
@@ -24,6 +25,7 @@ from app.payments.pricing import (
 from app.wg_api.wg_api import add_client_wg, get_config_wg
 
 renew_pay_router = Router()
+logger = logging.getLogger(__name__)
 
 RENEW_LABELS = {
     "monthly_subs": "Продление на 1 месяц",
@@ -162,9 +164,20 @@ async def handle_renew_success(message: Message):
             message.successful_payment.invoice_payload
         )
     except ValueError:
+        logger.error(
+            "Некорректный payload продления: tg_id=%s payload=%s",
+            message.from_user.id if message.from_user else None,
+            message.successful_payment.invoice_payload,
+        )
         return
 
     if plan not in PLAN_TO_MONTHS:
+        logger.error(
+            "Неизвестный тариф в payload продления: tg_id=%s plan=%s payload=%s",
+            message.from_user.id if message.from_user else None,
+            plan,
+            message.successful_payment.invoice_payload,
+        )
         return
 
     tg_id = message.from_user.id
@@ -182,6 +195,13 @@ async def handle_renew_success(message: Message):
         user_res = await session.execute(select(User).where(User.tg_id == tg_id))
         user = user_res.scalar_one_or_none()
         if not user:
+            logger.error(
+                "Пользователь не найден при продлении: tg_id=%s sub_id=%s plan=%s payment_charge_id=%s",
+                tg_id,
+                sub_id,
+                plan,
+                provider_payment_charge_id,
+            )
             await message.answer("❌ Пользователь не найден.")
             return
 
@@ -190,6 +210,13 @@ async def handle_renew_success(message: Message):
         )
         sub = sub_res.scalar_one_or_none()
         if not sub:
+            logger.error(
+                "Подписка не найдена при продлении: tg_id=%s sub_id=%s plan=%s payment_charge_id=%s",
+                tg_id,
+                sub_id,
+                plan,
+                provider_payment_charge_id,
+            )
             await message.answer("❌ Подписка не найдена.")
             return
 
@@ -237,6 +264,20 @@ async def handle_renew_success(message: Message):
         server_region_id = sub.server_region_id
         file_name = sub.file_name
         was_expired = current_expiry is None or current_expiry < today
+        logger.info(
+            "Успешное продление подписки: tg_id=%s username=%s sub_id=%s plan=%s months=%s amount_rub=%s bonus_spent=%s discount=%s new_expiry=%s was_expired=%s payment_charge_id=%s",
+            tg_id,
+            username,
+            sub_id,
+            plan,
+            months,
+            paid_rub,
+            bonus_to_spend,
+            discount_from_payload,
+            new_expiry.isoformat(),
+            was_expired,
+            provider_payment_charge_id,
+        )
 
     restore_message = ""
     if was_expired:
@@ -251,6 +292,13 @@ async def handle_renew_success(message: Message):
             server = srv_res.scalar_one_or_none()
 
         if not server:
+            logger.error(
+                "Не найден сервер для восстановления WG после продления: tg_id=%s sub_id=%s region=%s region_id=%s",
+                tg_id,
+                sub_id,
+                server_region,
+                server_region_id,
+            )
             restore_message = "\n⚠️ Сервер для восстановления конфигурации недоступен. Напишите в поддержку."
         else:
             try:
@@ -259,6 +307,14 @@ async def handle_renew_success(message: Message):
                 await get_config_wg(file_name, url, server.password)
                 await message.answer_document(FSInputFile(f"app/auth/{file_name}.conf"))
             except Exception:
+                logger.exception(
+                    "Ошибка восстановления WG-конфига после продления: tg_id=%s sub_id=%s client=%s region=%s region_id=%s",
+                    tg_id,
+                    sub_id,
+                    file_name,
+                    server_region,
+                    server_region_id,
+                )
                 restore_message = "\n⚠️ Не удалось автоматически восстановить конфигурацию. Напишите в поддержку."
 
     await message.answer(

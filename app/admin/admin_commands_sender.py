@@ -1,3 +1,5 @@
+import logging
+
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -12,6 +14,12 @@ from app.users.handlers import texts_for_bot
 from config import ADMIN_ID
 
 admin_command_router = Router()
+logger = logging.getLogger(__name__)
+
+
+def _admin_actor(user) -> str:
+    username = user.username or "-"
+    return f"{user.id} (@{username})"
 
 class BroadcastState(StatesGroup):
     confirmation = State()
@@ -97,11 +105,26 @@ async def start_broadcast(callback: CallbackQuery, state: FSMContext, bot: Bot):
             successful_sends += 1
         except Exception:
             failed_sends += 1  # Обработка ошибок
+            logger.exception(
+                "Ошибка отправки рассылки: admin=%s target_tg_id=%s",
+                _admin_actor(callback.from_user),
+                user_id,
+            )
+
+    logger.info(
+        "Админ %s завершил рассылку: всего=%s успешно=%s с ошибкой=%s формат=%s",
+        _admin_actor(callback.from_user),
+        len(users),
+        successful_sends,
+        failed_sends,
+        "photo+text" if photo_id else "text",
+    )
 
     await callback.message.answer(f'Рассылка завершена. Успешных отправок: {successful_sends}, неудачных: {failed_sends}', reply_markup=kb.admin_panel)
     await state.clear()
 
 @admin_command_router.callback_query(F.data == 'cancel_broadcast')
 async def cancel_broadcast(callback: CallbackQuery, state: FSMContext):
+    logger.info("Админ %s отменил рассылку.", _admin_actor(callback.from_user))
     await callback.message.answer("Рассылка отменена.", reply_markup=kb.admin_panel)
     await state.clear()

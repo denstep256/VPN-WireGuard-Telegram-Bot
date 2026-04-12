@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import tempfile
 from typing import Sequence, Iterable, Any
@@ -19,12 +20,18 @@ from config import ADMIN_ID
 from app.database.models import async_session, TestPeriod, User, Subscribers, Payments, Server
 
 admin_router = Router()
+logger = logging.getLogger(__name__)
 
 DATE_FMT = "%Y-%m-%d"
 
 
 def is_admin(user_id: int) -> bool:
     return user_id == int(ADMIN_ID)
+
+
+def _admin_actor(user) -> str:
+    username = user.username or "-"
+    return f"{user.id} (@{username})"
 
 
 def autosize_columns(ws):
@@ -72,7 +79,7 @@ async def send_excel(
         try:
             os.remove(tmp_path)
         except Exception:
-            pass
+            logger.exception("Не удалось удалить временный файл отчета: path=%s", tmp_path)
 
 
 @admin_router.message(F.text == "Админ")
@@ -135,11 +142,24 @@ async def clients_on_servers_wg(message: Message):
             count = await get_client_count_wg(url, s.password)
             total_clients += int(count)
             lines.append(f"• <b>{s.region} №{s.region_id}</b>: <b>{count}</b>")
-        except Exception as e:
+        except Exception:
+            logger.exception(
+                "Ошибка запроса клиентов WG: admin=%s region=%s region_id=%s host=%s",
+                _admin_actor(message.from_user),
+                s.region,
+                s.region_id,
+                s.host_ip,
+            )
             lines.append(f"• <b>{s.region} №{s.region_id}</b>: ⚠️ ошибка")
 
     lines.append(f"\n<b>Итого клиентов:</b> {total_clients}")
 
+    logger.info(
+        "Админ %s получил статистику клиентов WG: серверов=%s всего_клиентов=%s",
+        _admin_actor(message.from_user),
+        len(servers),
+        total_clients,
+    )
     await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb.stat_kb)
 
 # ====== Users -> Excel + summary ======
@@ -169,6 +189,11 @@ async def users_excel(message: Message):
         sheet_name="users",
         headers=["id", "tg_id", "username", "first_name", "date"],
         rows=rows,
+    )
+    logger.info(
+        "Админ %s выгрузил users.xlsx: rows=%s",
+        _admin_actor(message.from_user),
+        total,
     )
 
 
@@ -243,6 +268,14 @@ async def subscribers_excel(message: Message):
         ],
         rows=rows,
     )
+    logger.info(
+        "Админ %s выгрузил subscribers.xlsx: total=%s active=%s expired=%s bad_dates=%s",
+        _admin_actor(message.from_user),
+        total,
+        active,
+        expired,
+        bad_dates,
+    )
 
 
 # ====== TestPeriod -> Excel + summary ======
@@ -299,6 +332,14 @@ async def testperiod_excel(message: Message):
         sheet_name="test_period",
         headers=["id", "tg_id", "username", "file_name", "subscription", "expiry_date", "notif_oneday"],
         rows=rows,
+    )
+    logger.info(
+        "Админ %s выгрузил test_period.xlsx: total=%s active=%s expired=%s bad_dates=%s",
+        _admin_actor(message.from_user),
+        total,
+        active,
+        expired,
+        bad_dates,
     )
 
 
@@ -364,4 +405,11 @@ async def payments_excel(message: Message):
             "tarific_plan", "provider_payment_charge_id"
         ],
         rows=rows,
+    )
+    logger.info(
+        "Админ %s выгрузил payments.xlsx: total=%s sum=%.2f avg=%.2f",
+        _admin_actor(message.from_user),
+        total,
+        total_sum,
+        avg,
     )

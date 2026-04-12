@@ -1,3 +1,4 @@
+import logging
 from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
@@ -9,6 +10,9 @@ from datetime import datetime
 from app.database.models import async_session, Server
 from config import ADMIN_ID
 
+logger = logging.getLogger(__name__)
+
+
 class AddServerState(StatesGroup):
     region = State()
     region_id = State()
@@ -17,6 +21,11 @@ class AddServerState(StatesGroup):
     password = State()
 
 admin_command_add_server_router = Router()
+
+
+def _admin_actor(user) -> str:
+    username = user.username or "-"
+    return f"{user.id} (@{username})"
 
 
 @admin_command_add_server_router.message(F.text == 'Добавить сервер')
@@ -81,37 +90,63 @@ async def process_port(message: Message, state: FSMContext):
 
 @admin_command_add_server_router.message(AddServerState.password)
 async def process_password(message: Message, state: FSMContext):
+    if message.from_user.id != int(ADMIN_ID):
+        await message.answer('У вас нет доступа')
+        await state.clear()
+        return
+
     await state.update_data(password=message.text)
 
     # Получаем все данные
     data = await state.get_data()
 
     # Сохраняем в БД
-    async with async_session() as session:
-        # Проверка на дубликат
-        existing = await session.execute(
-            select(Server).where(
-                Server.region == data['region'],
-                Server.region_id == data['region_id']
+    try:
+        async with async_session() as session:
+            # Проверка на дубликат
+            existing = await session.execute(
+                select(Server).where(
+                    Server.region == data['region'],
+                    Server.region_id == data['region_id']
+                )
             )
-        )
-        if existing.scalar_one_or_none():
-            await message.answer("❌ Сервер с таким регионом и ID уже существует!")
-            await state.clear()
-            return
+            if existing.scalar_one_or_none():
+                await message.answer("❌ Сервер с таким регионом и ID уже существует!")
+                await state.clear()
+                return
 
-        new_server = Server(
-            region=data['region'],
-            region_id=data['region_id'],
-            host_ip=data['host_ip'],
-            port=data['port'],
-            password=data['password'],
-            date=datetime.now().strftime("%Y-%m-%d"),
-            is_active=True
+            new_server = Server(
+                region=data['region'],
+                region_id=data['region_id'],
+                host_ip=data['host_ip'],
+                port=data['port'],
+                password=data['password'],
+                date=datetime.now().strftime("%Y-%m-%d"),
+                is_active=True
+            )
+            session.add(new_server)
+            await session.commit()
+    except Exception:
+        logger.exception(
+            "Ошибка добавления сервера: admin=%s region=%s region_id=%s host=%s:%s",
+            _admin_actor(message.from_user),
+            data.get("region"),
+            data.get("region_id"),
+            data.get("host_ip"),
+            data.get("port"),
         )
-        session.add(new_server)
-        await session.commit()
+        await message.answer("❌ Не удалось добавить сервер из-за внутренней ошибки.")
+        await state.clear()
+        return
 
+    logger.info(
+        "Админ %s добавил сервер: region=%s region_id=%s host=%s:%s",
+        _admin_actor(message.from_user),
+        data["region"],
+        data["region_id"],
+        data["host_ip"],
+        data["port"],
+    )
     await message.answer(
         f"✅ Сервер добавлен:\n"
         f"регион: {data['region']} №{data['region_id']}\n"
