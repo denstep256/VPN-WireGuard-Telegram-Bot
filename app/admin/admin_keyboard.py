@@ -58,11 +58,17 @@ send_kb = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=BUTTON_TEXTS["without_photo"])],
         [KeyboardButton(text=BUTTON_TEXTS["with_photo"])],
-        [KeyboardButton(text=BUTTON_TEXTS["admin_back_short"])]
+        [KeyboardButton(text=BUTTON_TEXTS["cancel"])],
     ],
     resize_keyboard=True
 )
 
+cancel_kb = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text=BUTTON_TEXTS["cancel"])]
+    ],
+    resize_keyboard=True
+)
 
 preview_kb = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(

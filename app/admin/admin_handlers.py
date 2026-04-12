@@ -6,6 +6,8 @@ from typing import Sequence, Iterable, Any
 from datetime import datetime, date
 
 from aiogram import Router, F
+from aiogram.filters import StateFilter
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from aiogram.types.input_file import FSInputFile
 
@@ -83,16 +85,18 @@ async def send_excel(
 
 
 @admin_router.message(F.text == "Админ")
-async def admin_panel_button(message: Message):
+async def admin_panel_button(message: Message, state: FSMContext):
     if is_admin(message.from_user.id):
+        await state.clear()
         await message.answer("Вы вошли в админ-панель", reply_markup=kb.admin_panel)
     else:
         await message.answer("У вас нет доступа")
 
 
 @admin_router.message(F.text == "Назад (Админ)")
-async def help_main_button(message: Message):
+async def help_main_button(message: Message, state: FSMContext):
     if is_admin(message.from_user.id):
+        await state.clear()
         await message.answer("Вы вернулись в главное меню", reply_markup=get_main_keyboard(message.from_user.id))
     else:
         await message.answer("У вас нет доступа")
@@ -107,11 +111,27 @@ async def stats_menu(message: Message):
 
 
 @admin_router.message(F.text == "Назад Админ")
-async def back_admin(message: Message):
+async def back_admin(message: Message, state: FSMContext):
     if is_admin(message.from_user.id):
+        await state.clear()
         await message.answer("Вы вернулись в главное меню", reply_markup=kb.admin_panel)
     else:
         await message.answer("У вас нет доступа")
+
+
+@admin_router.message(
+    StateFilter("*"),
+    F.from_user.id == int(ADMIN_ID),
+    F.text.in_({"❌ Отмена", "Отмена", "отмена"}),
+)
+async def cancel_admin_action(message: Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state is None:
+        await message.answer("Нет активного действия для отмены.", reply_markup=kb.admin_panel)
+        return
+
+    await state.clear()
+    await message.answer("Действие отменено.", reply_markup=kb.admin_panel)
 
 
 @admin_router.message(F.text == "Клиенты на сервере")

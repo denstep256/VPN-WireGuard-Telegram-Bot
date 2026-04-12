@@ -8,12 +8,14 @@ from datetime import datetime, time
 
 import app.admin.admin_keyboard as admin_kb
 from app.addons.button_text import BUTTON_TEXTS
+from app.admin.admin_keyboard import cancel_kb
 from app.database.models import PromoCode, async_session
 from config import ADMIN_ID
 
 
 admin_add_promo_router = Router()
 logger = logging.getLogger(__name__)
+CANCEL_HINT = f"\nДля отмены отправьте: {BUTTON_TEXTS['cancel']}"
 
 
 class AddPromoState(StatesGroup):
@@ -54,8 +56,11 @@ async def start_add_promo(message: Message, state: FSMContext):
     await state.clear()
     await state.set_state(AddPromoState.waiting_code)
     await message.answer(
-        "Введите код промокода (латиница/цифры, до 32 символов).\nПример: <code>ZENITH10</code>",
+        "Введите код промокода (латиница/цифры, до 32 символов).\n"
+        "Пример: <code>ZENITH10</code>"
+        f"{CANCEL_HINT}",
         parse_mode="HTML",
+        reply_markup=cancel_kb
     )
 
 
@@ -79,7 +84,7 @@ async def add_promo_code(message: Message, state: FSMContext):
 
     await state.update_data(code=code)
     await state.set_state(AddPromoState.waiting_discount)
-    await message.answer("Укажите размер скидки в процентах (1-90):")
+    await message.answer(f"Укажите размер скидки в процентах (1-90):{CANCEL_HINT}")
 
 
 @admin_add_promo_router.message(AddPromoState.waiting_discount)
@@ -96,7 +101,7 @@ async def add_promo_discount(message: Message, state: FSMContext):
 
     await state.update_data(discount_percent=discount)
     await state.set_state(AddPromoState.waiting_first_purchase_only)
-    await message.answer("Промокод только на первую оплату? Ответьте: да / нет")
+    await message.answer(f"Промокод только на первую оплату? Ответьте: да / нет{CANCEL_HINT}")
 
 
 @admin_add_promo_router.message(AddPromoState.waiting_first_purchase_only)
@@ -108,7 +113,7 @@ async def add_promo_first_purchase_only(message: Message, state: FSMContext):
 
     await state.update_data(first_purchase_only=(answer == "да"))
     await state.set_state(AddPromoState.waiting_max_uses)
-    await message.answer("Сколько раз один пользователь может применить код? (1-20)")
+    await message.answer(f"Сколько раз один пользователь может применить код? (1-20){CANCEL_HINT}")
 
 
 @admin_add_promo_router.message(AddPromoState.waiting_max_uses)
@@ -127,7 +132,8 @@ async def add_promo_max_uses(message: Message, state: FSMContext):
     await state.set_state(AddPromoState.waiting_owner)
     await message.answer(
         "Введите TG ID владельца для персонального промокода.\n"
-        "Если код общий — отправьте <code>0</code>.",
+        "Если код общий — отправьте <code>0</code>."
+        f"{CANCEL_HINT}",
         parse_mode="HTML",
     )
 
@@ -147,7 +153,8 @@ async def add_promo_owner(message: Message, state: FSMContext):
     await message.answer(
         "Введите дату окончания промокода.\n"
         "Формат: <code>ДД.ММ.ГГГГ</code> или <code>YYYY-MM-DD</code>.\n"
-        "Промокод не может быть бессрочным.",
+        "Промокод не может быть бессрочным."
+        f"{CANCEL_HINT}",
         parse_mode="HTML",
     )
 

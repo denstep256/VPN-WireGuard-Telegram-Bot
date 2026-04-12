@@ -6,8 +6,9 @@ from aiogram.fsm.state import StatesGroup, State
 from sqlalchemy import select
 from datetime import datetime
 
-
+from app.admin.admin_keyboard import cancel_kb
 from app.database.models import async_session, Server
+from app.addons.button_text import BUTTON_TEXTS
 from config import ADMIN_ID
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,7 @@ class AddServerState(StatesGroup):
     password = State()
 
 admin_command_add_server_router = Router()
+CANCEL_HINT = f"\nДля отмены отправьте: {BUTTON_TEXTS['cancel']}"
 
 
 def _admin_actor(user) -> str:
@@ -31,7 +33,7 @@ def _admin_actor(user) -> str:
 @admin_command_add_server_router.message(F.text == 'Добавить сервер')
 async def start_add_server(message: Message, state: FSMContext):
     if message.from_user.id == int(ADMIN_ID):
-        await message.answer("Введите название региона (например, Amsterdam):")
+        await message.answer(f"Введите название региона (например, Amsterdam):{CANCEL_HINT}", reply_markup=cancel_kb)
         await state.set_state(AddServerState.region)
     else:
         await message.answer('У вас нет доступа')
@@ -41,7 +43,7 @@ async def start_add_server(message: Message, state: FSMContext):
 async def process_region(message: Message, state: FSMContext):
     if message.from_user.id == int(ADMIN_ID):
         await state.update_data(region=message.text.strip())
-        await message.answer("Введите ID региона (целое число, например, 1):")
+        await message.answer(f"Введите ID региона (целое число, например, 1):{CANCEL_HINT}")
         await state.set_state(AddServerState.region_id)
     else:
         await message.answer('У вас нет доступа')
@@ -54,7 +56,7 @@ async def process_region_id(message: Message, state: FSMContext):
             await message.answer("❌ ID должен быть числом. Попробуйте снова:")
             return
         await state.update_data(region_id=int(message.text))
-        await message.answer("Введите IP-адрес сервера (например, 5.129.238.169):")
+        await message.answer(f"Введите IP-адрес сервера (например, 5.129.238.169):{CANCEL_HINT}")
         await state.set_state(AddServerState.host_ip)
     else:
         await message.answer('У вас нет доступа')
@@ -69,7 +71,7 @@ async def process_host_ip(message: Message, state: FSMContext):
             await message.answer("⚠️ Некорректный IP. Введите снова:")
             return
         await state.update_data(host_ip=ip)
-        await message.answer("Введите порт (например, 51821):")
+        await message.answer(f"Введите порт (например, 51821):{CANCEL_HINT}")
         await state.set_state(AddServerState.port)
     else:
         await message.answer('У вас нет доступа')
@@ -82,7 +84,7 @@ async def process_port(message: Message, state: FSMContext):
             await message.answer("❌ Порт должен быть числом от 1 до 65535. Попробуйте снова:")
             return
         await state.update_data(port=message.text)
-        await message.answer("Введите пароль для админки WireGuard Easy:")
+        await message.answer(f"Введите пароль для админки WireGuard Easy:{CANCEL_HINT}")
         await state.set_state(AddServerState.password)
     else:
         await message.answer('У вас нет доступа')

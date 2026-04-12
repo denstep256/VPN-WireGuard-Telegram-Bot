@@ -15,6 +15,7 @@ from config import ADMIN_ID
 
 admin_command_router = Router()
 logger = logging.getLogger(__name__)
+CANCEL_HINT = "\nДля отмены отправьте: ❌ Отмена"
 
 
 def _admin_actor(user) -> str:
@@ -31,7 +32,7 @@ class BroadcastState(StatesGroup):
 @admin_command_router.message(F.text == 'Рассылка')
 async def choose_broadcast_type(message: Message, state: FSMContext):
     if message.from_user.id == int(ADMIN_ID):
-        await message.answer('Выберите тип рассылки:', reply_markup=kb.send_kb)
+        await message.answer(f'Выберите тип рассылки:{CANCEL_HINT}', reply_markup=kb.send_kb)
         await state.set_state(BroadcastState.choosing_type)
     else:
         await message.answer('У вас нет доступа')
@@ -39,20 +40,22 @@ async def choose_broadcast_type(message: Message, state: FSMContext):
 @admin_command_router.message(BroadcastState.choosing_type)
 async def handle_broadcast_choice(message: Message, state: FSMContext):
     if message.text == 'С фото':
-        await message.answer('Пожалуйста, отправьте фото для рассылки:')
+        await message.answer(f'Пожалуйста, отправьте фото для рассылки:{CANCEL_HINT}')
         await state.set_state(BroadcastState.waiting_for_photo)
     elif message.text == 'Без фото':
-        await message.answer(texts_for_bot["admin_commands_sender"])
+        await message.answer(f'{texts_for_bot["admin_commands_sender"]}{CANCEL_HINT}')
         await state.set_state(BroadcastState.waiting_for_text)
+    else:
+        await message.answer("Выберите вариант: 'С фото' или 'Без фото'.", reply_markup=kb.send_kb)
 
 @admin_command_router.message(BroadcastState.waiting_for_photo)
 async def receive_photo(message: Message, state: FSMContext):
     if message.photo:
         await state.update_data(photo=message.photo[-1].file_id)  # Сохраняем самое высокое качество
-        await message.answer(texts_for_bot["admin_commands_sender"])
+        await message.answer(f'{texts_for_bot["admin_commands_sender"]}{CANCEL_HINT}')
         await state.set_state(BroadcastState.waiting_for_text)
     else:
-        await message.answer('Пожалуйста, отправьте фото.')
+        await message.answer(f'Пожалуйста, отправьте фото.{CANCEL_HINT}')
 
 
 @admin_command_router.message(BroadcastState.waiting_for_text)

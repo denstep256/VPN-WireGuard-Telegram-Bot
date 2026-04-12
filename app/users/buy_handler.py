@@ -17,7 +17,7 @@ async def help_main_button(message: Message):
     async with async_session() as session:
         keyboard = await kb.get_servers_keyboard(session)
         await message.answer(
-            "🌍 <b>Выберите сервер</b>, и я сразу покажу актуальные тарифы.",
+            "🌍 <b>Выберите сервер</b>",
             reply_markup=keyboard,
             parse_mode="HTML"
         )

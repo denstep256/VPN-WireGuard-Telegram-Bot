@@ -12,6 +12,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select, update, delete, func
 
 from app.addons.utilits import generate_client_name, determine_subscription_type
+from app.admin.admin_keyboard import cancel_kb
 from app.database.models import async_session, Subscribers, User, Server
 from app.wg_api.wg_api import add_client_wg, get_config_wg, remove_client_wg
 from config import ADMIN_ID
@@ -85,7 +86,7 @@ async def start_flow(message: Message, state: FSMContext):
         return
 
     await state.clear()
-    await message.answer("Введите <b>tg_id</b> или <b>username</b> пользователя (можно с @):", parse_mode="HTML")
+    await message.answer("Введите <b>tg_id</b> или <b>username</b> пользователя (можно с @):", parse_mode="HTML", reply_markup=cancel_kb)
     await state.set_state(SubsFSM.waiting_for_identifier)
 
 
