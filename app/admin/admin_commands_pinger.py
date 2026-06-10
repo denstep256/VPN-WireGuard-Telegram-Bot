@@ -10,6 +10,7 @@ import app.admin.admin_keyboard as kb
 from app.admin.admin_handlers import is_admin
 from app.database.models import async_session, Server
 from app.users.keyboard import get_main_keyboard
+from app.vpn.provisioning import PROTOCOL_WIREGUARD, server_protocol_filter
 
 admin_pinger_router = Router()
 logger = logging.getLogger(__name__)
@@ -53,7 +54,7 @@ async def ping_servers(message: Message):
     async with async_session() as session:
         res = await session.execute(
             select(Server)
-            .where(Server.is_active == True)
+            .where(Server.is_active == True, server_protocol_filter(PROTOCOL_WIREGUARD))  # noqa: E712
             .order_by(Server.region, Server.region_id)
         )
         servers = res.scalars().all()

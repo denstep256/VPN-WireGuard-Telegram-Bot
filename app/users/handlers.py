@@ -11,7 +11,7 @@ import app.users.keyboard as kb
 import app.admin.admin_keyboard as admin_kb
 import app.database.requests as rq
 from app.database.models import TestPeriod, Subscribers, async_session, Server
-from config import ADMIN_ID, one_mounth_fake_price, one_mounth_price, six_mounth_price, six_mounth_fake_price, twelve_mounth_price, twelve_mounth_fake_price
+from config import ADMIN_ID
 
 router = Router()
 
@@ -70,15 +70,17 @@ async def help_main_button(message: Message):
 
 @router.message(F.text == 'iPhone 📱')
 async def help_main_button(message: Message):
-    await message.answer(texts_for_bot['iphone_message'], reply_markup=kb.accept_kb)
+    await message.answer(texts_for_bot['iphone_message'], reply_markup=kb.iphone_kb)
+    await message.answer(texts_for_bot["download_btn"], reply_markup=kb.accept_kb)
 
 @router.message(F.text == 'Android 📱')
 async def help_main_button(message: Message):
-    await message.answer(texts_for_bot['android_message'], reply_markup=kb.accept_kb)
+    await message.answer(texts_for_bot['android_message'], reply_markup=kb.android_kb)
+    await message.answer(texts_for_bot["download_btn"], reply_markup=kb.accept_kb)
 
 @router.message(F.text == 'Скачал✅')
 async def help_main_button(message: Message):
-    # Сообщение с inline кнопками
+
     await message.answer(
         texts_for_bot['download_message'],
         reply_markup=kb.download_kb

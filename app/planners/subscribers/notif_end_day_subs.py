@@ -10,11 +10,11 @@ from app.addons.utilits import parse_date_value
 from app.database.models import Server, Subscribers, async_session
 from app.planners.scheduler_runtime import get_scheduler
 from app.vpn.provisioning import (
-    PROTOCOL_WIREGUARD,
     format_service_location,
     get_protocol_label,
     get_record_protocol,
     remove_vpn_access,
+    server_protocol_filter,
 )
 
 
@@ -44,7 +44,7 @@ async def check_subscriptions_subs(bot: Bot):
             message = (
                 "⚠️ <b>Срок подписки истёк сегодня</b>\n\n"
                 f"Протокол: <b>{get_protocol_label(get_record_protocol(subscription))}</b>\n"
-                f"Сервис: <b>{format_service_location(get_record_protocol(subscription), subscription.server_region, subscription.server_region_id)}</b>\n"
+                f"Сервер: <b>{format_service_location(get_record_protocol(subscription), subscription.server_region, subscription.server_region_id)}</b>\n"
                 "Чтобы вернуть доступ, продлите подписку одним нажатием."
             )
             renew_kb = InlineKeyboardMarkup(
@@ -75,15 +75,14 @@ async def check_subscriptions_subs(bot: Bot):
                 )
 
             protocol = get_record_protocol(subscription)
-            server = None
-            if protocol == PROTOCOL_WIREGUARD:
-                server_result = await session.execute(
-                    select(Server).where(
-                        Server.region == subscription.server_region,
-                        Server.region_id == subscription.server_region_id,
-                    )
+            server_result = await session.execute(
+                select(Server).where(
+                    Server.region == subscription.server_region,
+                    Server.region_id == subscription.server_region_id,
+                    server_protocol_filter(protocol),
                 )
-                server = server_result.scalar_one_or_none()
+            )
+            server = server_result.scalar_one_or_none()
 
             try:
                 await remove_vpn_access(

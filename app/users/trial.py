@@ -11,6 +11,7 @@ from app.vpn.provisioning import (
     PROTOCOL_WIREGUARD,
     create_vpn_access,
     send_access_to_user,
+    server_protocol_filter,
 )
 
 trial_router = Router()
@@ -61,21 +62,20 @@ async def trial_button(call: CallbackQuery):
         await call.answer()
         return
 
-    server = None
-    if protocol == PROTOCOL_WIREGUARD:
-        async with async_session() as session:
-            server_result = await session.execute(
-                select(Server).where(
-                    Server.region == region,
-                    Server.region_id == region_id,
-                    Server.is_active == True,  # noqa: E712
-                )
+    async with async_session() as session:
+        server_result = await session.execute(
+            select(Server).where(
+                Server.region == region,
+                Server.region_id == region_id,
+                Server.is_active == True,  # noqa: E712
+                server_protocol_filter(protocol),
             )
-            server = server_result.scalar_one_or_none()
-            if not server:
-                await call.message.answer("❌ Сервер не найден или недоступен.")
-                await call.answer()
-                return
+        )
+        server = server_result.scalar_one_or_none()
+        if not server:
+            await call.message.answer("❌ Сервер не найден или недоступен.")
+            await call.answer()
+            return
 
     client_name = generate_client_name()
     expiry_date = (datetime.now() + timedelta(days=3)).date().isoformat()
@@ -104,6 +104,8 @@ async def trial_button(call: CallbackQuery):
                 file_name=client_name,
                 subscription="trial",
                 expiry_date=expiry_date,
+                server_region=region,
+                server_region_id=region_id,
                 protocol=protocol,
                 xui_sub_id=access.xui_sub_id,
                 notif_oneday=False,

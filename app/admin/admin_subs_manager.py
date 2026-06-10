@@ -15,13 +15,12 @@ from app.database.models import async_session, Subscribers, User, Server
 from app.vpn.provisioning import (
     PROTOCOL_WIREGUARD,
     PROTOCOL_XUI,
-    XUI_REGION,
-    XUI_REGION_ID,
     create_vpn_access,
     format_service_location,
     get_protocol_label,
     get_record_protocol,
     remove_vpn_access,
+    server_protocol_filter,
     send_access_to_user,
     update_vpn_expiry,
 )
@@ -260,7 +259,7 @@ async def select_sub(call: CallbackQuery, state: FSMContext):
         f"<b>Подписка id {sub.id}</b>\n"
         f"Протокол: <b>{get_protocol_label(get_record_protocol(sub))}</b>\n"
         f"Тариф: <b>{sub.subscription}</b>\n"
-        f"Сервис: <b>{format_service_location(get_record_protocol(sub), sub.server_region, sub.server_region_id)}</b>\n"
+        f"Сервер: <b>{format_service_location(get_record_protocol(sub), sub.server_region, sub.server_region_id)}</b>\n"
         f"До: <b>{sub.expiry_date}</b>\n"
         f"Клиент: <b>{sub.file_name}</b>",
         parse_mode="HTML",
@@ -293,7 +292,7 @@ async def create_new_start(call: CallbackQuery, state: FSMContext):
 
     kb = InlineKeyboardBuilder()
     kb.button(text="WireGuard", callback_data=f"subs:protocol:{PROTOCOL_WIREGUARD}")
-    kb.button(text="3xUI", callback_data=f"subs:protocol:{PROTOCOL_XUI}")
+    kb.button(text="VLESS", callback_data=f"subs:protocol:{PROTOCOL_XUI}")
     kb.button(text="◀️ К списку", callback_data="subs:back_to_list")
     kb.button(text="❌ Отмена", callback_data="subs:cancel")
     kb.adjust(1)
@@ -317,17 +316,11 @@ async def create_new_pick_protocol(call: CallbackQuery, state: FSMContext):
 
     await state.update_data(protocol=protocol)
 
-    if protocol == PROTOCOL_XUI:
-        await state.update_data(server_region=XUI_REGION, server_region_id=XUI_REGION_ID)
-        kb = months_kb(prefix="subs:new_months")
-        await call.message.answer("На сколько месяцев выдать подписку 3xUI?", reply_markup=kb.as_markup())
-        await call.answer()
-        await state.set_state(SubsFSM.choosing_new_months)
-        return
-
     async with async_session() as session:
         res = await session.execute(
-            select(Server).where(Server.is_active == True).order_by(Server.region, Server.region_id)
+            select(Server)
+            .where(Server.is_active == True, server_protocol_filter(protocol))  # noqa: E712
+            .order_by(Server.region, Server.region_id)
         )
         servers = res.scalars().all()
 
@@ -343,7 +336,10 @@ async def create_new_pick_protocol(call: CallbackQuery, state: FSMContext):
     kb.button(text="❌ Отмена", callback_data="subs:cancel")
     kb.adjust(1)
 
-    await call.message.answer("Выберите сервер для новой подписки:", reply_markup=kb.as_markup())
+    await call.message.answer(
+        f"Выберите сервер {get_protocol_label(protocol)} для новой подписки:",
+        reply_markup=kb.as_markup(),
+    )
     await call.answer()
     await state.set_state(SubsFSM.choosing_server)
 
@@ -402,14 +398,17 @@ async def create_new_finish(call: CallbackQuery, state: FSMContext):
             user = ures.scalar_one_or_none()
             username = user.username if user else None
 
-            server = None
-            if protocol == PROTOCOL_WIREGUARD:
-                sres = await session.execute(
-                    select(Server).where(Server.region == region, Server.region_id == region_id, Server.is_active == True)
+            sres = await session.execute(
+                select(Server).where(
+                    Server.region == region,
+                    Server.region_id == region_id,
+                    Server.is_active == True,  # noqa: E712
+                    server_protocol_filter(protocol),
                 )
-                server = sres.scalar_one_or_none()
+            )
+            server = sres.scalar_one_or_none()
 
-            if protocol == PROTOCOL_WIREGUARD and not server:
+            if not server:
                 await call.message.answer("Сервер не найден или не активен.")
                 await call.answer()
                 return
@@ -475,7 +474,7 @@ async def create_new_finish(call: CallbackQuery, state: FSMContext):
         f"✅ Подписка создана.\n"
         f"ID: <b>{new_sub_id}</b>\n"
         f"Протокол: <b>{get_protocol_label(protocol)}</b>\n"
-        f"Сервис: <b>{format_service_location(protocol, region, region_id)}</b>\n"
+        f"Сервер: <b>{format_service_location(protocol, region, region_id)}</b>\n"
         f"До: <b>{expiry_date}</b>\n"
         f"Клиент: <b>{client_name}</b>",
         parse_mode="HTML",
@@ -561,13 +560,22 @@ async def extend_finish(call: CallbackQuery, state: FSMContext):
             new_exp = (current_exp + timedelta(days=months * 30)).strftime(DATE_FMT)
             protocol = get_record_protocol(sub)
             client_name = sub.file_name
+            sres = await session.execute(
+                select(Server).where(
+                    Server.region == sub.server_region,
+                    Server.region_id == sub.server_region_id,
+                    Server.is_active == True,  # noqa: E712
+                    server_protocol_filter(protocol),
+                )
+            )
+            server = sres.scalar_one_or_none()
 
             await session.execute(
                 update(Subscribers).where(Subscribers.id == sub_id).values(expiry_date=new_exp, note="manual_update")
             )
             await session.commit()
         try:
-            await update_vpn_expiry(protocol=protocol, client_name=client_name, expiry_date=new_exp)
+            await update_vpn_expiry(protocol=protocol, client_name=client_name, expiry_date=new_exp, server=server)
         except Exception:
             logger.exception(
                 "Ошибка синхронизации срока после админского продления: admin=%s sub_id=%s protocol=%s client=%s",
@@ -576,7 +584,7 @@ async def extend_finish(call: CallbackQuery, state: FSMContext):
                 protocol,
                 client_name,
             )
-            await call.message.answer("⚠️ Дата в БД обновлена, но срок на 3xUI не синхронизирован.")
+            await call.message.answer("⚠️ Дата в БД обновлена, но срок на VLESS не синхронизирован.")
     except Exception:
         logger.exception(
             "Ошибка продления подписки админом: admin=%s target_tg_id=%s sub_id=%s months=%s",
@@ -688,13 +696,22 @@ async def reduce_finish(message: Message, state: FSMContext):
             new_exp = new_exp_dt.strftime(DATE_FMT)
             protocol = get_record_protocol(sub)
             client_name = sub.file_name
+            sres = await session.execute(
+                select(Server).where(
+                    Server.region == sub.server_region,
+                    Server.region_id == sub.server_region_id,
+                    Server.is_active == True,  # noqa: E712
+                    server_protocol_filter(protocol),
+                )
+            )
+            server = sres.scalar_one_or_none()
 
             await session.execute(
                 update(Subscribers).where(Subscribers.id == sub_id).values(expiry_date=new_exp, note="manual_delite")
             )
             await session.commit()
         try:
-            await update_vpn_expiry(protocol=protocol, client_name=client_name, expiry_date=new_exp)
+            await update_vpn_expiry(protocol=protocol, client_name=client_name, expiry_date=new_exp, server=server)
         except Exception:
             logger.exception(
                 "Ошибка синхронизации срока после админского уменьшения: admin=%s sub_id=%s protocol=%s client=%s",
@@ -703,7 +720,7 @@ async def reduce_finish(message: Message, state: FSMContext):
                 protocol,
                 client_name,
             )
-            await message.answer("⚠️ Дата в БД обновлена, но срок на 3xUI не синхронизирован.")
+            await message.answer("⚠️ Дата в БД обновлена, но срок на VLESS не синхронизирован.")
     except Exception:
         logger.exception(
             "Ошибка уменьшения подписки админом: admin=%s target_tg_id=%s sub_id=%s days=%s",
@@ -767,7 +784,7 @@ async def delete_menu(call: CallbackQuery, state: FSMContext):
     await call.message.answer(
         f"Удалить подписку <b>{sub_id}</b>?\n"
         f"Протокол: <b>{get_protocol_label(get_record_protocol(sub))}</b>\n"
-        f"Сервис: <b>{format_service_location(get_record_protocol(sub), sub.server_region, sub.server_region_id)}</b>\n"
+        f"Сервер: <b>{format_service_location(get_record_protocol(sub), sub.server_region, sub.server_region_id)}</b>\n"
         f"Expiry: <b>{sub.expiry_date}</b>\n"
         f"Клиент: <b>{sub.file_name}</b>",
         parse_mode="HTML",
@@ -811,15 +828,15 @@ async def delete_confirm(call: CallbackQuery, state: FSMContext):
             protocol = get_record_protocol(sub)
             server = None
 
-            if protocol == PROTOCOL_WIREGUARD:
-                srv_res = await session.execute(
-                    select(Server).where(
-                        Server.region == region,
-                        Server.region_id == region_id,
-                        Server.is_active == True
-                    )
+            srv_res = await session.execute(
+                select(Server).where(
+                    Server.region == region,
+                    Server.region_id == region_id,
+                    Server.is_active == True,  # noqa: E712
+                    server_protocol_filter(protocol),
                 )
-                server = srv_res.scalar_one_or_none()
+            )
+            server = srv_res.scalar_one_or_none()
 
             # 2) удаляем запись из БД
             await session.execute(delete(Subscribers).where(Subscribers.id == sub_id))
@@ -864,7 +881,7 @@ async def delete_confirm(call: CallbackQuery, state: FSMContext):
         else:
             msg.append("Удаление на сервере WG: ⚠️ сервер не найден (в БД), пропущено")
     else:
-        msg.append(f"Удаление в 3xUI: {'✅' if removed_remote else '⚠️ ошибка/не удалено'}")
+        msg.append(f"Удаление в VLESS: {'✅' if removed_remote else '⚠️ ошибка/не удалено'}")
 
     await call.message.answer("\n".join(msg), parse_mode="HTML")
     await call.answer()

@@ -146,15 +146,18 @@ async def clients_on_servers_wg(message: Message):
             .where(Server.is_active == True)
             .order_by(Server.region, Server.region_id)
         )
-        servers = res.scalars().all()
+        all_servers = res.scalars().all()
 
     total_clients = 0
+    wireguard_servers = [s for s in all_servers if (s.protocol or PROTOCOL_WIREGUARD) == PROTOCOL_WIREGUARD]
+    vless_servers = [s for s in all_servers if s.protocol == PROTOCOL_XUI]
+
     lines = ["📊 <b>Клиенты VPN по сервисам</b>\n", "<b>WireGuard:</b>"]
 
-    if not servers:
+    if not wireguard_servers:
         lines.append("• нет активных серверов")
     else:
-        for s in servers:
+        for s in wireguard_servers:
             try:
                 count = await get_vpn_client_count(PROTOCOL_WIREGUARD, s)
                 total_clients += int(count)
@@ -169,20 +172,31 @@ async def clients_on_servers_wg(message: Message):
                 )
                 lines.append(f"• <b>{s.region} №{s.region_id}</b>: ⚠️ ошибка")
 
-    try:
-        xui_count = await get_vpn_client_count(PROTOCOL_XUI)
-        total_clients += int(xui_count)
-        lines.append(f"\n<b>3xUI:</b>\n• <b>Панель</b>: <b>{xui_count}</b>")
-    except Exception:
-        logger.exception("Ошибка запроса клиентов 3xUI: admin=%s", _admin_actor(message.from_user))
-        lines.append("\n<b>3xUI:</b>\n• <b>Панель</b>: ⚠️ ошибка")
+    lines.append("\n<b>VLESS:</b>")
+    if not vless_servers:
+        lines.append("• нет активных серверов")
+    else:
+        for s in vless_servers:
+            try:
+                count = await get_vpn_client_count(PROTOCOL_XUI, s)
+                total_clients += int(count)
+                lines.append(f"• <b>{s.region} №{s.region_id}</b>: <b>{count}</b>")
+            except Exception:
+                logger.exception(
+                    "Ошибка запроса клиентов VLESS: admin=%s region=%s region_id=%s host=%s",
+                    _admin_actor(message.from_user),
+                    s.region,
+                    s.region_id,
+                    s.host_ip,
+                )
+                lines.append(f"• <b>{s.region} №{s.region_id}</b>: ⚠️ ошибка")
 
     lines.append(f"\n<b>Итого клиентов:</b> {total_clients}")
 
     logger.info(
         "Админ %s получил статистику клиентов VPN: серверов=%s всего_клиентов=%s",
         _admin_actor(message.from_user),
-        len(servers),
+        len(all_servers),
         total_clients,
     )
     await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb.stat_kb)

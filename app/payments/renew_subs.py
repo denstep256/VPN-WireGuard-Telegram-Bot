@@ -28,6 +28,7 @@ from app.vpn.provisioning import (
     get_protocol_label,
     get_record_protocol,
     restore_vpn_access,
+    server_protocol_filter,
     send_access_to_user,
     update_vpn_expiry,
 )
@@ -273,6 +274,15 @@ async def handle_renew_success(message: Message):
         file_name = sub.file_name
         protocol = get_record_protocol(sub)
         xui_sub_id = sub.xui_sub_id
+        srv_res = await session.execute(
+            select(Server).where(
+                Server.region == server_region,
+                Server.region_id == server_region_id,
+                Server.is_active == True,  # noqa: E712
+                server_protocol_filter(protocol),
+            )
+        )
+        server = srv_res.scalar_one_or_none()
         was_expired = current_expiry is None or current_expiry < today
         logger.info(
             "Успешное продление подписки: tg_id=%s username=%s sub_id=%s plan=%s protocol=%s months=%s amount_rub=%s bonus_spent=%s discount=%s new_expiry=%s was_expired=%s payment_charge_id=%s",
@@ -297,34 +307,24 @@ async def handle_renew_success(message: Message):
                 protocol=protocol,
                 client_name=file_name,
                 expiry_date=new_expiry,
+                server=server,
             )
         except Exception:
             logger.exception(
-                "Ошибка синхронизации срока 3xUI после продления: tg_id=%s sub_id=%s client=%s",
+                "Ошибка синхронизации срока VLESS после продления: tg_id=%s sub_id=%s client=%s",
                 tg_id,
                 sub_id,
                 file_name,
             )
-            restore_message = "\n⚠️ Не удалось синхронизировать срок в 3xUI. Напишите в поддержку."
+            restore_message = "\n⚠️ Не удалось синхронизировать срок в VLESS. Напишите в поддержку."
 
     if was_expired:
-        server = None
-        if protocol == PROTOCOL_WIREGUARD:
-            async with async_session() as session:
-                srv_res = await session.execute(
-                    select(Server).where(
-                        Server.region == server_region,
-                        Server.region_id == server_region_id,
-                        Server.is_active == True,  # noqa: E712
-                    )
-                )
-                server = srv_res.scalar_one_or_none()
-
-        if protocol == PROTOCOL_WIREGUARD and not server:
+        if not server:
             logger.error(
-                "Не найден сервер для восстановления WG после продления: tg_id=%s sub_id=%s region=%s region_id=%s",
+                "Не найден сервер для восстановления после продления: tg_id=%s sub_id=%s protocol=%s region=%s region_id=%s",
                 tg_id,
                 sub_id,
+                protocol,
                 server_region,
                 server_region_id,
             )
@@ -364,7 +364,7 @@ async def handle_renew_success(message: Message):
     await message.answer(
         "✅ <b>Подписка продлена!</b>\n\n"
         f"🛡️ <b>Протокол:</b> {get_protocol_label(protocol)}\n"
-        f"📍 <b>Сервис:</b> {format_service_location(protocol, server_region, server_region_id)}\n"
+        f"📍 <b>Сервер:</b> {format_service_location(protocol, server_region, server_region_id)}\n"
         f"💳 <b>Тариф:</b> {RENEW_LABELS[plan]}\n"
         f"💰 <b>Списано бонусов:</b> {bonus_to_spend} ₽\n"
         f"⏳ <b>Активна до:</b> <b>{new_expiry.isoformat()}</b>"

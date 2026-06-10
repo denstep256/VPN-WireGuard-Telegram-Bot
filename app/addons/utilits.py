@@ -13,6 +13,7 @@ from app.vpn.provisioning import (
     get_protocol_label,
     get_vpn_client_count,
     is_xui_protocol,
+    server_protocol_filter,
 )
 from app.xui_api.xui_api import XUIClient
 
@@ -34,16 +35,6 @@ async def check_available_clients_count(
     region_id: int | None = None,
     protocol: str = PROTOCOL_WIREGUARD,
 ) -> bool:
-    if is_xui_protocol(protocol):
-        max_clients = int(getattr(config, "XUI_MAX_CLIENTS", 0) or 0)
-        inbound_ids = await XUIClient().get_target_inbound_ids()
-        if not inbound_ids:
-            return False
-        count = await get_vpn_client_count(PROTOCOL_XUI)
-        if max_clients <= 0:
-            return True
-        return count < max_clients
-
     if not region or region_id is None:
         return False
 
@@ -53,11 +44,22 @@ async def check_available_clients_count(
                 Server.region == region,
                 Server.region_id == region_id,
                 Server.is_active == True,  # noqa: E712
+                server_protocol_filter(protocol),
             )
         )
         server = result.scalar_one_or_none()
         if not server:
             return False
+
+        if is_xui_protocol(protocol):
+            max_clients = int(getattr(config, "XUI_MAX_CLIENTS", 0) or 0)
+            inbound_ids = await XUIClient.from_server(server).get_target_inbound_ids()
+            if not inbound_ids:
+                return False
+            count = await get_vpn_client_count(PROTOCOL_XUI, server)
+            if max_clients <= 0:
+                return True
+            return count < max_clients
 
         count = await get_vpn_client_count(PROTOCOL_WIREGUARD, server)
         return count < 60
@@ -143,10 +145,7 @@ def build_tariff_caption(
         "",
     ]
 
-    if is_xui_protocol(protocol):
-        lines.append("📍 <b>Сервис:</b> 3xUI panel")
-    else:
-        lines.append(f"📍 <b>Сервер:</b> {server_region} №{server_region_id}")
+    lines.append(f"📍 <b>Сервер:</b> {server_region} №{server_region_id}")
 
     if renew_file_name:
         lines.append(f"🧾 <b>Продление для конфигурации:</b> <code>{renew_file_name}</code>")

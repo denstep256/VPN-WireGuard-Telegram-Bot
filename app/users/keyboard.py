@@ -6,7 +6,13 @@ from sqlalchemy.orm import Session
 
 from app.addons.button_text import BUTTON_TEXTS
 from app.database.models import Server, Subscribers
-from app.vpn.provisioning import PROTOCOL_WIREGUARD, PROTOCOL_XUI, get_protocol_label, get_record_protocol
+from app.vpn.provisioning import (
+    PROTOCOL_WIREGUARD,
+    PROTOCOL_XUI,
+    get_protocol_label,
+    get_record_protocol,
+    server_protocol_filter,
+)
 from config import ADMIN_ID
 
 
@@ -26,14 +32,16 @@ def get_subscriptions_kb(subs: list[Subscribers]) -> InlineKeyboardMarkup:
 def get_protocols_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="WireGuard", callback_data=f"proto|{PROTOCOL_WIREGUARD}")],
-        [InlineKeyboardButton(text="3xUI", callback_data=f"proto|{PROTOCOL_XUI}")],
+        [InlineKeyboardButton(text="VLESS", callback_data=f"proto|{PROTOCOL_XUI}")],
     ])
 
 
 async def get_servers_keyboard(session: Session, protocol: str = PROTOCOL_WIREGUARD) -> InlineKeyboardMarkup:
     # Получаем активные серверы из БД
     result = await session.execute(
-        select(Server).where(Server.is_active == True).order_by(Server.region)
+        select(Server)
+        .where(Server.is_active == True, server_protocol_filter(protocol))  # noqa: E712
+        .order_by(Server.region, Server.region_id)
     )
     servers = result.scalars().all()
 

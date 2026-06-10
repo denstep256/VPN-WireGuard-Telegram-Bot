@@ -33,6 +33,7 @@ from app.vpn.provisioning import (
     format_service_location,
     get_protocol_label,
     send_access_to_user,
+    server_protocol_filter,
 )
 
 pay_router = Router()
@@ -57,12 +58,13 @@ def _parse_callback_data(data: str) -> tuple[Optional[str], Optional[str], Optio
     return callback_plan, protocol, region, int(region_id_str)
 
 
-async def _get_server(session, region: str, region_id: int) -> Optional[Server]:
+async def _get_server(session, region: str, region_id: int, protocol: str) -> Optional[Server]:
     result = await session.execute(
         select(Server).where(
             Server.region == region,
             Server.region_id == region_id,
             Server.is_active == True,  # noqa: E712
+            server_protocol_filter(protocol),
         )
     )
     return result.scalar_one_or_none()
@@ -303,11 +305,9 @@ async def handle_successful_payment(message: Message):
         session.add(new_subscriber)
         await session.flush()
 
-        server = None
-        if protocol == PROTOCOL_WIREGUARD:
-            server = await _get_server(session, region, region_id)
+        server = await _get_server(session, region, region_id, protocol)
 
-        if protocol == PROTOCOL_WIREGUARD and not server:
+        if not server:
             logger.error(
                 "Сервер недоступен после успешного платежа: tg_id=%s plan=%s protocol=%s region=%s region_id=%s payment_charge_id=%s",
                 tg_id,
@@ -379,7 +379,7 @@ async def handle_successful_payment(message: Message):
     await message.answer(
         f"✅ Ваша подписка успешно оформлена до <b>{expiry_date.isoformat()}</b>.\n\n"
         f"🛡️ <b>Протокол:</b> {get_protocol_label(protocol)}\n"
-        f"📍 <b>Сервис:</b> {format_service_location(protocol, region, region_id)}\n"
+        f"📍 <b>Сервер:</b> {format_service_location(protocol, region, region_id)}\n"
         f"💳 <b>Списано бонусов:</b> {bonus_to_spend} ₽",
         parse_mode="HTML",
     )
