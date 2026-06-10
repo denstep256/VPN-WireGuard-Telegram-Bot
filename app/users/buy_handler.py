@@ -33,6 +33,7 @@ async def handle_protocol_selection(callback: CallbackQuery):
     if len(parts) != 2:
         await callback.answer("❌ Некорректный формат выбора протокола.", show_alert=True)
         return
+    protocol = parts[1]
 
     async with async_session() as session:
         keyboard = await kb.get_servers_keyboard(session, protocol=protocol)
