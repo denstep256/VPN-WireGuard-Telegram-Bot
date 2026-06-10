@@ -3,10 +3,10 @@ from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from sqlalchemy import select
+from sqlalchemy import func, select
 from datetime import datetime
 
-from app.admin.admin_keyboard import cancel_kb
+from app.admin.admin_keyboard import cancel_kb, admin_panel
 from app.database.models import async_session, Server
 from app.addons.button_text import BUTTON_TEXTS
 from app.vpn.provisioning import PROTOCOL_WIREGUARD, PROTOCOL_XUI, get_protocol_label, normalize_protocol
@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 class AddServerState(StatesGroup):
     protocol = State()
     region = State()
-    region_id = State()
     host_ip = State()
     port = State()
     password = State()
@@ -40,6 +39,24 @@ def _admin_actor(user) -> str:
 def _optional_value(value: str | None) -> str:
     value = (value or "").strip()
     return "" if value in {"", "-"} else value
+
+
+def _host_prompt(protocol: str) -> str:
+    if normalize_protocol(protocol) == PROTOCOL_XUI:
+        return "Введите адрес панели VLESS (IP, домен или URL, например https://example.com):"
+    return "Введите IP-адрес сервера (например, 5.129.238.169):"
+
+
+async def _next_region_id(region: str, protocol: str) -> int:
+    async with async_session() as session:
+        result = await session.execute(
+            select(func.max(Server.region_id)).where(
+                Server.region == region,
+                Server.protocol == normalize_protocol(protocol),
+            )
+        )
+        current_max = result.scalar()
+    return int(current_max or 0) + 1
 
 
 async def _save_server(message: Message, state: FSMContext) -> None:
@@ -104,7 +121,8 @@ async def _save_server(message: Message, state: FSMContext) -> None:
         f"✅ Сервер добавлен:\n"
         f"протокол: {get_protocol_label(protocol)}\n"
         f"регион: {data['region']} №{data['region_id']}\n"
-        f"адрес: {data['host_ip']}:{data['port']}"
+        f"адрес: {data['host_ip']}:{data['port']}",
+        reply_markup=admin_panel
     )
     await state.clear()
 
@@ -144,26 +162,21 @@ async def process_protocol(message: Message, state: FSMContext):
 @admin_command_add_server_router.message(AddServerState.region)
 async def process_region(message: Message, state: FSMContext):
     if message.from_user.id == int(ADMIN_ID):
-        await state.update_data(region=message.text.strip())
-        await message.answer(f"Введите ID региона (целое число, например, 1):{CANCEL_HINT}")
-        await state.set_state(AddServerState.region_id)
-    else:
-        await message.answer('У вас нет доступа')
-
-
-@admin_command_add_server_router.message(AddServerState.region_id)
-async def process_region_id(message: Message, state: FSMContext):
-    if message.from_user.id == int(ADMIN_ID):
-        if not message.text.isdigit():
-            await message.answer("❌ ID должен быть числом. Попробуйте снова:")
+        region = (message.text or "").strip()
+        if not region:
+            await message.answer("❌ Название региона не может быть пустым. Попробуйте снова:")
             return
-        await state.update_data(region_id=int(message.text))
+
         data = await state.get_data()
-        if normalize_protocol(data.get("protocol")) == PROTOCOL_XUI:
-            prompt = "Введите адрес панели VLESS (IP, домен или URL, например https://example.com):"
-        else:
-            prompt = "Введите IP-адрес сервера (например, 5.129.238.169):"
-        await message.answer(f"{prompt}{CANCEL_HINT}")
+        protocol = normalize_protocol(data.get("protocol"))
+        region_id = await _next_region_id(region, protocol)
+        await state.update_data(region=region, region_id=region_id)
+
+        await message.answer(
+            f"ID региона назначен автоматически: <b>{region_id}</b>\n"
+            f"{_host_prompt(protocol)}{CANCEL_HINT}",
+            parse_mode="HTML",
+        )
         await state.set_state(AddServerState.host_ip)
     else:
         await message.answer('У вас нет доступа')

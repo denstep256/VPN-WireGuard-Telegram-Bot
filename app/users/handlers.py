@@ -4,6 +4,7 @@ from datetime import datetime
 
 from aiogram.types import Message, FSInputFile, CallbackQuery, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
 from sqlalchemy import select
 from aiogram import Router, F
 
@@ -22,7 +23,8 @@ with open("app/addons/texts.json", encoding="utf-8") as file_handler:
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
     start_arg = None
     parts = (message.text or "").split(maxsplit=1)
     if len(parts) > 1:
@@ -57,7 +59,8 @@ async def help_main_button(message: Message):
     await message.answer(texts_for_bot["about_message"], parse_mode='HTML')
 
 @router.message(F.text == 'Назад ↩️')
-async def help_main_button(message: Message):
+async def help_main_button(message: Message, state: FSMContext):
+    await state.clear()
     if message.from_user.id == int(ADMIN_ID):
         await message.answer('Вы вернулись в главное меню', reply_markup=kb.get_main_keyboard(message.from_user.id))
     else:

@@ -22,6 +22,11 @@ async def promo_start(message: Message, state: FSMContext):
 
 @promocode_router.message(PromoStates.waiting_code)
 async def promo_entered(message: Message, state: FSMContext):
+    if message.text == BUTTON_TEXTS["back"]:
+        await state.clear()
+        await message.answer("Вы вернулись в главное меню", reply_markup=kb.get_main_keyboard(message.from_user.id))
+        return
+
     code = (message.text or "").strip().upper()
     tg_id = message.from_user.id
 
