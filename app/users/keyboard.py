@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.addons.button_text import BUTTON_TEXTS
 from app.database.models import Server, Subscribers
+from app.vpn.provisioning import PROTOCOL_WIREGUARD, PROTOCOL_XUI, get_protocol_label, get_record_protocol
 from config import ADMIN_ID
 
 
@@ -13,14 +14,23 @@ def get_subscriptions_kb(subs: list[Subscribers]) -> InlineKeyboardMarkup:
     buttons = []
     for sub in subs:
         # Например: "Amsterdam №1 — до 2025-08-15"
-        text = f"{sub.server_region} №{sub.server_region_id} — до {sub.expiry_date}"
+        protocol_label = get_protocol_label(get_record_protocol(sub))
+        text = f"{protocol_label}: {sub.server_region} №{sub.server_region_id} — до {sub.expiry_date}"
         callback_data = f"renew_sub|{sub.id}"  # используем ID записи
         buttons.append([InlineKeyboardButton(text=text, callback_data=callback_data)])
 
     buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-async def get_servers_keyboard(session: Session) -> InlineKeyboardMarkup:
+
+def get_protocols_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="WireGuard", callback_data=f"proto|{PROTOCOL_WIREGUARD}")],
+        [InlineKeyboardButton(text="3xUI", callback_data=f"proto|{PROTOCOL_XUI}")],
+    ])
+
+
+async def get_servers_keyboard(session: Session, protocol: str = PROTOCOL_WIREGUARD) -> InlineKeyboardMarkup:
     # Получаем активные серверы из БД
     result = await session.execute(
         select(Server).where(Server.is_active == True).order_by(Server.region)
@@ -34,7 +44,7 @@ async def get_servers_keyboard(session: Session) -> InlineKeyboardMarkup:
         buttons.append([
             InlineKeyboardButton(
                 text=button_text,
-                callback_data=f'srv|{server.region}|{server.region_id}'
+                callback_data=f'srv|{protocol}|{server.region}|{server.region_id}'
             )
         ])
     # Если серверов нет — показываем уведомление
@@ -48,12 +58,12 @@ async def get_servers_keyboard(session: Session) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_buy_kb(region: str, region_id: int) -> InlineKeyboardMarkup:
+def get_buy_kb(region: str, region_id: int, protocol: str = PROTOCOL_WIREGUARD) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=BUTTON_TEXTS["buy_1"], callback_data=f'one_month|{region}|{region_id}')],
-        [InlineKeyboardButton(text=BUTTON_TEXTS["buy_6"], callback_data=f'six_month|{region}|{region_id}')],
-        [InlineKeyboardButton(text=BUTTON_TEXTS["buy_12"], callback_data=f'twelve_month|{region}|{region_id}')],
-        [InlineKeyboardButton(text=BUTTON_TEXTS["buy_test"], callback_data=f'test_3_days|{region}|{region_id}')],
+        [InlineKeyboardButton(text=BUTTON_TEXTS["buy_1"], callback_data=f'one_month|{protocol}|{region}|{region_id}')],
+        [InlineKeyboardButton(text=BUTTON_TEXTS["buy_6"], callback_data=f'six_month|{protocol}|{region}|{region_id}')],
+        [InlineKeyboardButton(text=BUTTON_TEXTS["buy_12"], callback_data=f'twelve_month|{protocol}|{region}|{region_id}')],
+        [InlineKeyboardButton(text=BUTTON_TEXTS["buy_test"], callback_data=f'test_3_days|{protocol}|{region}|{region_id}')],
     ])
 
 def get_renew_buy_kb(sub_id: int) -> InlineKeyboardMarkup:

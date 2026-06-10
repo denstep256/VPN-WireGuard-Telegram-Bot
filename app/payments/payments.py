@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 from datetime import datetime
@@ -6,7 +5,7 @@ from typing import Optional
 
 import config
 from aiogram import Bot, F, Router
-from aiogram.types import CallbackQuery, FSInputFile, LabeledPrice, Message, PreCheckoutQuery
+from aiogram.types import CallbackQuery, LabeledPrice, Message, PreCheckoutQuery
 from sqlalchemy import select, update
 
 from app.addons.utilits import calculate_expiry_date, check_available_clients_count, generate_client_name
@@ -28,23 +27,34 @@ from app.payments.pricing import (
     mark_promo_used_if_applicable,
     parse_buy_payload,
 )
-from app.wg_api.wg_api import add_client_wg, get_config_wg
+from app.vpn.provisioning import (
+    PROTOCOL_WIREGUARD,
+    create_vpn_access,
+    format_service_location,
+    get_protocol_label,
+    send_access_to_user,
+)
 
 pay_router = Router()
 logger = logging.getLogger(__name__)
 
 
-def _parse_callback_data(data: str) -> tuple[Optional[str], Optional[str], Optional[int]]:
+def _parse_callback_data(data: str) -> tuple[Optional[str], Optional[str], Optional[str], Optional[int]]:
     parts = (data or "").split("|")
     if len(parts) < 3:
-        return None, None, None
+        return None, None, None, None
 
-    callback_plan, region, region_id_str = parts[0], parts[1], parts[2]
+    callback_plan = parts[0]
+    if len(parts) >= 4 and parts[1] in {"wireguard", "xui"}:
+        protocol, region, region_id_str = parts[1], parts[2], parts[3]
+    else:
+        protocol, region, region_id_str = PROTOCOL_WIREGUARD, parts[1], parts[2]
+
     if callback_plan not in CALLBACK_TO_PAYLOAD_PLAN:
-        return None, None, None
+        return None, None, None, None
     if not region_id_str.isdigit():
-        return None, None, None
-    return callback_plan, region, int(region_id_str)
+        return None, None, None, None
+    return callback_plan, protocol, region, int(region_id_str)
 
 
 async def _get_server(session, region: str, region_id: int) -> Optional[Server]:
@@ -137,8 +147,8 @@ async def _send_invoice(
     | F.data.startswith("twelve_month|")
 )
 async def create_invoice_any(call: CallbackQuery):
-    callback_plan, region, region_id = _parse_callback_data(call.data)
-    if not callback_plan or not region or region_id is None:
+    callback_plan, protocol, region, region_id = _parse_callback_data(call.data)
+    if not callback_plan or not protocol or not region or region_id is None:
         await call.answer("❌ Ошибка данных.", show_alert=True)
         return
 
@@ -159,6 +169,7 @@ async def create_invoice_any(call: CallbackQuery):
         region_id=region_id,
         discount=discount,
         bonus_used=bonus_to_use,
+        protocol=protocol,
     )
 
     await _send_invoice(
@@ -179,7 +190,7 @@ async def create_invoice_any(call: CallbackQuery):
 )
 async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: Bot):
     try:
-        _, region, region_id, _, _ = parse_buy_payload(pre_checkout_query.invoice_payload)
+        _, protocol, region, region_id, _, _ = parse_buy_payload(pre_checkout_query.invoice_payload)
     except ValueError:
         await bot.answer_pre_checkout_query(
             pre_checkout_query.id,
@@ -188,7 +199,18 @@ async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: 
         )
         return
 
-    is_available = await check_available_clients_count(region=region, region_id=region_id)
+    try:
+        is_available = await check_available_clients_count(region=region, region_id=region_id, protocol=protocol)
+    except Exception:
+        logger.exception(
+            "Ошибка проверки доступности перед платежом: tg_id=%s protocol=%s region=%s region_id=%s",
+            pre_checkout_query.from_user.id,
+            protocol,
+            region,
+            region_id,
+        )
+        is_available = False
+
     if is_available:
         await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
         return
@@ -196,7 +218,7 @@ async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: 
     await bot.answer_pre_checkout_query(
         pre_checkout_query.id,
         ok=False,
-        error_message="К сожалению, на выбранном сервере нет свободных мест.",
+        error_message="К сожалению, выбранный VPN-сервис сейчас недоступен.",
     )
 
 
@@ -207,7 +229,7 @@ async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: 
 )
 async def handle_successful_payment(message: Message):
     try:
-        plan, region, region_id, discount_from_payload, bonus_reserved = parse_buy_payload(
+        plan, protocol, region, region_id, discount_from_payload, bonus_reserved = parse_buy_payload(
             message.successful_payment.invoice_payload
         )
     except ValueError:
@@ -275,17 +297,22 @@ async def handle_successful_payment(message: Message):
             expiry_date=expiry_date.isoformat(),
             server_region=region,
             server_region_id=region_id,
+            protocol=protocol,
             notif_oneday=False,
         )
         session.add(new_subscriber)
         await session.flush()
 
-        server = await _get_server(session, region, region_id)
-        if not server:
+        server = None
+        if protocol == PROTOCOL_WIREGUARD:
+            server = await _get_server(session, region, region_id)
+
+        if protocol == PROTOCOL_WIREGUARD and not server:
             logger.error(
-                "Сервер недоступен после успешного платежа: tg_id=%s plan=%s region=%s region_id=%s payment_charge_id=%s",
+                "Сервер недоступен после успешного платежа: tg_id=%s plan=%s protocol=%s region=%s region_id=%s payment_charge_id=%s",
                 tg_id,
                 plan,
+                protocol,
                 region,
                 region_id,
                 provider_payment_charge_id,
@@ -296,19 +323,22 @@ async def handle_successful_payment(message: Message):
             )
             return
 
-        ip = f"https://{server.host_ip}:{server.port}"
-        password = server.password
-
         try:
-            await add_client_wg(client_name, ip, password)
-            await get_config_wg(client_name, ip, password)
-            await asyncio.sleep(1)
+            access = await create_vpn_access(
+                protocol=protocol,
+                client_name=client_name,
+                expiry_date=expiry_date,
+                tg_id=tg_id,
+                username=username,
+                server=server,
+            )
         except Exception:
             logger.exception(
-                "Ошибка выдачи WG-конфига после успешной оплаты: tg_id=%s sub_id=%s client=%s region=%s region_id=%s payment_charge_id=%s",
+                "Ошибка выдачи VPN-доступа после успешной оплаты: tg_id=%s sub_id=%s client=%s protocol=%s region=%s region_id=%s payment_charge_id=%s",
                 tg_id,
                 new_subscriber.id,
                 client_name,
+                protocol,
                 region,
                 region_id,
                 provider_payment_charge_id,
@@ -322,7 +352,7 @@ async def handle_successful_payment(message: Message):
         await session.execute(
             update(Subscribers)
             .where(Subscribers.id == new_subscriber.id)
-            .values(file_name=client_name, notif_oneday=False)
+            .values(file_name=client_name, notif_oneday=False, xui_sub_id=access.xui_sub_id)
         )
 
         await mark_promo_used_if_applicable(session, tg_id, is_first_payment)
@@ -331,11 +361,12 @@ async def handle_successful_payment(message: Message):
 
         await session.commit()
         logger.info(
-            "Успешная покупка подписки: tg_id=%s username=%s sub_id=%s plan=%s amount_rub=%s bonus_spent=%s discount=%s region=%s region_id=%s expiry=%s payment_charge_id=%s",
+            "Успешная покупка подписки: tg_id=%s username=%s sub_id=%s plan=%s protocol=%s amount_rub=%s bonus_spent=%s discount=%s region=%s region_id=%s expiry=%s payment_charge_id=%s",
             tg_id,
             username,
             new_subscriber.id,
             plan,
+            protocol,
             paid_rub,
             bonus_to_spend,
             discount_from_payload,
@@ -345,11 +376,11 @@ async def handle_successful_payment(message: Message):
             provider_payment_charge_id,
         )
 
-    file_path = f"app/auth/{client_name}.conf"
     await message.answer(
         f"✅ Ваша подписка успешно оформлена до <b>{expiry_date.isoformat()}</b>.\n\n"
-        f"📍 <b>Сервер:</b> {region} №{region_id}\n"
+        f"🛡️ <b>Протокол:</b> {get_protocol_label(protocol)}\n"
+        f"📍 <b>Сервис:</b> {format_service_location(protocol, region, region_id)}\n"
         f"💳 <b>Списано бонусов:</b> {bonus_to_spend} ₽",
         parse_mode="HTML",
     )
-    await message.answer_document(FSInputFile(file_path))
+    await send_access_to_user(message, access)

@@ -8,6 +8,7 @@ import logging
 from app.addons.utilits import parse_date_value
 from app.database.models import TestPeriod, async_session
 from app.planners.scheduler_runtime import get_scheduler
+from app.vpn.provisioning import get_protocol_label, get_record_protocol
 
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ async def check_subscriptions_trial(bot: Bot):
 
             message = (
                 "⏳ <b>Пробный период заканчивается завтра</b>\n\n"
+                f"Протокол: <b>{get_protocol_label(get_record_protocol(trial))}</b>\n"
                 f"Доступ действует до <b>{expiry.isoformat()}</b>.\n"
                 "Чтобы не терять подключение, выберите платный тариф заранее."
             )

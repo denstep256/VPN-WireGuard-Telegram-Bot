@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 import config
 from aiogram import Bot, F, Router
-from aiogram.types import CallbackQuery, FSInputFile, LabeledPrice, Message, PreCheckoutQuery
+from aiogram.types import CallbackQuery, LabeledPrice, Message, PreCheckoutQuery
 from sqlalchemy import select, update
 
 from app.addons.utilits import add_months, parse_date_value
@@ -22,7 +22,15 @@ from app.payments.pricing import (
     mark_promo_used_if_applicable,
     parse_renew_payload,
 )
-from app.wg_api.wg_api import add_client_wg, get_config_wg
+from app.vpn.provisioning import (
+    PROTOCOL_WIREGUARD,
+    format_service_location,
+    get_protocol_label,
+    get_record_protocol,
+    restore_vpn_access,
+    send_access_to_user,
+    update_vpn_expiry,
+)
 
 renew_pay_router = Router()
 logger = logging.getLogger(__name__)
@@ -263,13 +271,16 @@ async def handle_renew_success(message: Message):
         server_region = sub.server_region
         server_region_id = sub.server_region_id
         file_name = sub.file_name
+        protocol = get_record_protocol(sub)
+        xui_sub_id = sub.xui_sub_id
         was_expired = current_expiry is None or current_expiry < today
         logger.info(
-            "Успешное продление подписки: tg_id=%s username=%s sub_id=%s plan=%s months=%s amount_rub=%s bonus_spent=%s discount=%s new_expiry=%s was_expired=%s payment_charge_id=%s",
+            "Успешное продление подписки: tg_id=%s username=%s sub_id=%s plan=%s protocol=%s months=%s amount_rub=%s bonus_spent=%s discount=%s new_expiry=%s was_expired=%s payment_charge_id=%s",
             tg_id,
             username,
             sub_id,
             plan,
+            protocol,
             months,
             paid_rub,
             bonus_to_spend,
@@ -280,18 +291,36 @@ async def handle_renew_success(message: Message):
         )
 
     restore_message = ""
-    if was_expired:
-        async with async_session() as session:
-            srv_res = await session.execute(
-                select(Server).where(
-                    Server.region == server_region,
-                    Server.region_id == server_region_id,
-                    Server.is_active == True,  # noqa: E712
-                )
+    if protocol != PROTOCOL_WIREGUARD and not was_expired:
+        try:
+            await update_vpn_expiry(
+                protocol=protocol,
+                client_name=file_name,
+                expiry_date=new_expiry,
             )
-            server = srv_res.scalar_one_or_none()
+        except Exception:
+            logger.exception(
+                "Ошибка синхронизации срока 3xUI после продления: tg_id=%s sub_id=%s client=%s",
+                tg_id,
+                sub_id,
+                file_name,
+            )
+            restore_message = "\n⚠️ Не удалось синхронизировать срок в 3xUI. Напишите в поддержку."
 
-        if not server:
+    if was_expired:
+        server = None
+        if protocol == PROTOCOL_WIREGUARD:
+            async with async_session() as session:
+                srv_res = await session.execute(
+                    select(Server).where(
+                        Server.region == server_region,
+                        Server.region_id == server_region_id,
+                        Server.is_active == True,  # noqa: E712
+                    )
+                )
+                server = srv_res.scalar_one_or_none()
+
+        if protocol == PROTOCOL_WIREGUARD and not server:
             logger.error(
                 "Не найден сервер для восстановления WG после продления: tg_id=%s sub_id=%s region=%s region_id=%s",
                 tg_id,
@@ -302,16 +331,31 @@ async def handle_renew_success(message: Message):
             restore_message = "\n⚠️ Сервер для восстановления конфигурации недоступен. Напишите в поддержку."
         else:
             try:
-                url = f"https://{server.host_ip}:{server.port}"
-                await add_client_wg(file_name, url, server.password)
-                await get_config_wg(file_name, url, server.password)
-                await message.answer_document(FSInputFile(f"app/auth/{file_name}.conf"))
+                access = await restore_vpn_access(
+                    protocol=protocol,
+                    client_name=file_name,
+                    expiry_date=new_expiry,
+                    tg_id=tg_id,
+                    username=username,
+                    server=server,
+                    xui_sub_id=xui_sub_id,
+                )
+                if access.xui_sub_id and access.xui_sub_id != xui_sub_id:
+                    async with async_session() as session:
+                        await session.execute(
+                            update(Subscribers)
+                            .where(Subscribers.id == sub_id)
+                            .values(xui_sub_id=access.xui_sub_id)
+                        )
+                        await session.commit()
+                await send_access_to_user(message, access)
             except Exception:
                 logger.exception(
-                    "Ошибка восстановления WG-конфига после продления: tg_id=%s sub_id=%s client=%s region=%s region_id=%s",
+                    "Ошибка восстановления VPN-доступа после продления: tg_id=%s sub_id=%s client=%s protocol=%s region=%s region_id=%s",
                     tg_id,
                     sub_id,
                     file_name,
+                    protocol,
                     server_region,
                     server_region_id,
                 )
@@ -319,7 +363,8 @@ async def handle_renew_success(message: Message):
 
     await message.answer(
         "✅ <b>Подписка продлена!</b>\n\n"
-        f"📍 <b>Сервер:</b> {server_region} №{server_region_id}\n"
+        f"🛡️ <b>Протокол:</b> {get_protocol_label(protocol)}\n"
+        f"📍 <b>Сервис:</b> {format_service_location(protocol, server_region, server_region_id)}\n"
         f"💳 <b>Тариф:</b> {RENEW_LABELS[plan]}\n"
         f"💰 <b>Списано бонусов:</b> {bonus_to_spend} ₽\n"
         f"⏳ <b>Активна до:</b> <b>{new_expiry.isoformat()}</b>"

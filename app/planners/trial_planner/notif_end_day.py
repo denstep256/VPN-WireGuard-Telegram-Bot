@@ -5,11 +5,11 @@ from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select, update
 import logging
 
-from app.addons.utilits import delete_file_by_name, parse_date_value
+from app.addons.utilits import parse_date_value
 from app.database.models import Server, TestPeriod, async_session
 from app.planners.scheduler_runtime import get_scheduler
 from app.users.handlers import texts_for_bot
-from app.wg_api.wg_api import remove_client_wg
+from app.vpn.provisioning import get_record_protocol, remove_trial_access
 
 
 logger = logging.getLogger(__name__)
@@ -50,25 +50,16 @@ async def check_subscriptions_trial(bot: Bot):
                     trial.tg_id,
                 )
 
-            delete_file_by_name(trial.file_name)
-
-            for server in servers:
-                try:
-                    await remove_client_wg(
-                        trial.file_name,
-                        f"https://{server.host_ip}:{server.port}",
-                        server.password,
-                    )
-                except Exception:
-                    failed_remove_remote += 1
-                    logger.exception(
-                        "Failed to remove trial WireGuard client: trial_id=%s file_name=%s region=%s region_id=%s",
-                        trial.id,
-                        trial.file_name,
-                        server.region,
-                        server.region_id,
-                    )
-                    continue
+            try:
+                await remove_trial_access(trial=trial, servers=servers)
+            except Exception:
+                failed_remove_remote += 1
+                logger.exception(
+                    "Failed to remove trial VPN client: trial_id=%s protocol=%s file_name=%s",
+                    trial.id,
+                    get_record_protocol(trial),
+                    trial.file_name,
+                )
 
             await session.execute(
                 update(TestPeriod)

@@ -1,8 +1,5 @@
-import os
-
 from aiogram import Router, F
-from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, FSInputFile, \
-    BufferedInputFile
+from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, BufferedInputFile
 from sqlalchemy import select
 
 import app.users.keyboard as kb
@@ -11,7 +8,14 @@ from app.addons.utilits import build_tariff_caption, format_tariff
 from app.database.models import async_session, Subscribers, TestPeriod, Server
 from app.payments.pricing import get_active_discount_percent
 from app.users.handlers import texts_for_bot
-from config import DIR_CONF
+from app.vpn.provisioning import (
+    PROTOCOL_WIREGUARD,
+    build_xui_monitoring_lines,
+    format_service_location,
+    get_protocol_label,
+    get_record_protocol,
+    send_existing_access_to_user,
+)
 
 user_renew_router = Router()
 
@@ -39,7 +43,8 @@ async def check_subscribe_button(message: Message):
 
     # Подписки из Subscribers
     for sub in subscribers:
-        text = f"{sub.server_region} №{sub.server_region_id} — до {sub.expiry_date}"
+        protocol_label = get_protocol_label(get_record_protocol(sub))
+        text = f"{protocol_label}: {sub.server_region} №{sub.server_region_id} — до {sub.expiry_date}"
         callback_data = f"renew_sub|{sub.id}"
         buttons.append([InlineKeyboardButton(text=text, callback_data=callback_data)])
 
@@ -82,12 +87,20 @@ async def handle_subscribe_click(call: CallbackQuery):
         await call.answer("❌ Подписка не найдена.", show_alert=True)
         return
 
+    protocol = get_record_protocol(sub)
+    monitoring_lines = []
+    if protocol != PROTOCOL_WIREGUARD:
+        monitoring_lines = await build_xui_monitoring_lines(sub.file_name)
+
     text = (
         "📌 <b>Ваша подписка</b>\n\n"
-        f"📍 <b>Сервер:</b> {sub.server_region} №{sub.server_region_id}\n"
+        f"🛡️ <b>Протокол:</b> {get_protocol_label(protocol)}\n"
+        f"📍 <b>Сервис:</b> {format_service_location(protocol, sub.server_region, sub.server_region_id)}\n"
         f"💳 <b>Тариф:</b> {format_tariff(sub.subscription)}\n"
         f"⏳ <b>Активна до:</b> {sub.expiry_date}\n"
     )
+    if monitoring_lines:
+        text += "\n" + "\n".join(monitoring_lines) + "\n"
 
     kb_renew = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔁 Продлить подписку", callback_data=f"renew_open|{sub_id}")]
@@ -95,22 +108,7 @@ async def handle_subscribe_click(call: CallbackQuery):
 
     await call.message.answer(text, parse_mode="HTML", reply_markup=kb_renew)
 
-    # 2) Конфиг .conf
-    # Если file_name хранится без расширения — добавим .conf
-    filename = sub.file_name
-    if not filename.endswith(".conf"):
-        filename += ".conf"
-
-    conf_path = os.path.join(DIR_CONF, filename)
-
-    if os.path.exists(conf_path):
-        await call.message.answer_document(FSInputFile(conf_path))
-    else:
-        await call.message.answer(
-            f"⚠️ Конфигурация не найдена: <code>{filename}</code>\n"
-            f"Путь: <code>{conf_path}</code>",
-            parse_mode="HTML"
-        )
+    await send_existing_access_to_user(call.message, sub)
 
     await call.answer()
 
@@ -134,17 +132,20 @@ async def handle_renew_open(call: CallbackQuery):
             await call.answer("❌ Подписка не найдена.", show_alert=True)
             return
 
-        # 2) достаём сервер (чтобы показать в окне покупки)
-        res_srv = await session.execute(
-            select(Server).where(
-                Server.region == sub.server_region,
-                Server.region_id == sub.server_region_id,
-                Server.is_active == True
+        protocol = get_record_protocol(sub)
+        server = None
+        if protocol == PROTOCOL_WIREGUARD:
+            # 2) достаём сервер (чтобы показать в окне покупки)
+            res_srv = await session.execute(
+                select(Server).where(
+                    Server.region == sub.server_region,
+                    Server.region_id == sub.server_region_id,
+                    Server.is_active == True
+                )
             )
-        )
-        server = res_srv.scalar_one_or_none()
+            server = res_srv.scalar_one_or_none()
 
-    if not server:
+    if protocol == PROTOCOL_WIREGUARD and not server:
         await call.answer("❌ Сервер не найден или недоступен.", show_alert=True)
         return
 
@@ -152,10 +153,11 @@ async def handle_renew_open(call: CallbackQuery):
         discount_percent = await get_active_discount_percent(session, tg_id)
 
     caption_text = build_tariff_caption(
-        server_region=server.region,
-        server_region_id=server.region_id,
+        server_region=sub.server_region,
+        server_region_id=sub.server_region_id,
         discount_percent=discount_percent,
         renew_file_name=sub.file_name,
+        protocol=protocol,
     )
 
     # ВАЖНО: клавиатура покупки теперь должна содержать sub_id

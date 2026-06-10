@@ -2,11 +2,19 @@ import os
 import random
 from datetime import date, datetime, timedelta
 
+import config
 from sqlalchemy import select
 
 from app.database.models import Server, Subscribers, async_session
 from app.payments.pricing import format_tariff_lines
-from app.wg_api.wg_api import get_client_count_wg
+from app.vpn.provisioning import (
+    PROTOCOL_WIREGUARD,
+    PROTOCOL_XUI,
+    get_protocol_label,
+    get_vpn_client_count,
+    is_xui_protocol,
+)
+from app.xui_api.xui_api import XUIClient
 
 
 generated_usernames = set()
@@ -21,7 +29,24 @@ def generate_client_name() -> str:
             return client_name
 
 
-async def check_available_clients_count(region: str, region_id: int) -> bool:
+async def check_available_clients_count(
+    region: str | None = None,
+    region_id: int | None = None,
+    protocol: str = PROTOCOL_WIREGUARD,
+) -> bool:
+    if is_xui_protocol(protocol):
+        max_clients = int(getattr(config, "XUI_MAX_CLIENTS", 0) or 0)
+        inbound_ids = await XUIClient().get_target_inbound_ids()
+        if not inbound_ids:
+            return False
+        count = await get_vpn_client_count(PROTOCOL_XUI)
+        if max_clients <= 0:
+            return True
+        return count < max_clients
+
+    if not region or region_id is None:
+        return False
+
     async with async_session() as session:
         result = await session.execute(
             select(Server).where(
@@ -34,8 +59,7 @@ async def check_available_clients_count(region: str, region_id: int) -> bool:
         if not server:
             return False
 
-        ip = f"https://{server.host_ip}:{server.port}"
-        count = await get_client_count_wg(ip, server.password)
+        count = await get_vpn_client_count(PROTOCOL_WIREGUARD, server)
         return count < 60
 
 
@@ -111,12 +135,18 @@ def build_tariff_caption(
     server_region_id: int,
     discount_percent: int = 0,
     renew_file_name: str | None = None,
+    protocol: str = PROTOCOL_WIREGUARD,
 ) -> str:
+    protocol_label = get_protocol_label(protocol)
     lines = [
-        "🛡️ <b>WireGuard VPN</b>",
+        f"🛡️ <b>{protocol_label} VPN</b>",
         "",
-        f"📍 <b>Сервер:</b> {server_region} №{server_region_id}",
     ]
+
+    if is_xui_protocol(protocol):
+        lines.append("📍 <b>Сервис:</b> 3xUI panel")
+    else:
+        lines.append(f"📍 <b>Сервер:</b> {server_region} №{server_region_id}")
 
     if renew_file_name:
         lines.append(f"🧾 <b>Продление для конфигурации:</b> <code>{renew_file_name}</code>")

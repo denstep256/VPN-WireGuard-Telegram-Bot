@@ -1,5 +1,3 @@
-import os
-import asyncio
 import logging
 from datetime import datetime, timedelta
 
@@ -14,7 +12,19 @@ from sqlalchemy import select, update, delete, func
 from app.addons.utilits import generate_client_name, determine_subscription_type
 from app.admin.admin_keyboard import cancel_kb
 from app.database.models import async_session, Subscribers, User, Server
-from app.wg_api.wg_api import add_client_wg, get_config_wg, remove_client_wg
+from app.vpn.provisioning import (
+    PROTOCOL_WIREGUARD,
+    PROTOCOL_XUI,
+    XUI_REGION,
+    XUI_REGION_ID,
+    create_vpn_access,
+    format_service_location,
+    get_protocol_label,
+    get_record_protocol,
+    remove_vpn_access,
+    send_access_to_user,
+    update_vpn_expiry,
+)
 from config import ADMIN_ID
 
 admin_subs_router = Router()
@@ -50,7 +60,7 @@ def parse_date(date_str: str) -> datetime:
 def short_sub_button_text(s: Subscribers) -> str:
     # кнопка должна быть короткой
     # пример: "id 12 | NL#1 | 2026-02-28"
-    return f"id {s.id} | {s.server_region}#{s.server_region_id} | {s.expiry_date}"
+    return f"id {s.id} | {get_protocol_label(get_record_protocol(s))} | {s.server_region}#{s.server_region_id} | {s.expiry_date}"
 
 
 def months_kb(prefix: str) -> InlineKeyboardBuilder:
@@ -69,6 +79,7 @@ class SubsFSM(StatesGroup):
     listing_subs = State()
     chosen_sub = State()
 
+    choosing_protocol = State()
     choosing_server = State()
     choosing_new_months = State()
 
@@ -247,10 +258,11 @@ async def select_sub(call: CallbackQuery, state: FSMContext):
 
     await call.message.answer(
         f"<b>Подписка id {sub.id}</b>\n"
+        f"Протокол: <b>{get_protocol_label(get_record_protocol(sub))}</b>\n"
         f"Тариф: <b>{sub.subscription}</b>\n"
-        f"Сервер: <b>{sub.server_region} №{sub.server_region_id}</b>\n"
+        f"Сервис: <b>{format_service_location(get_record_protocol(sub), sub.server_region, sub.server_region_id)}</b>\n"
         f"До: <b>{sub.expiry_date}</b>\n"
-        f"Файл: <b>{sub.file_name}</b>",
+        f"Клиент: <b>{sub.file_name}</b>",
         parse_mode="HTML",
         reply_markup=kb.as_markup(),
     )
@@ -277,6 +289,40 @@ async def create_new_start(call: CallbackQuery, state: FSMContext):
     if not is_admin(call.from_user.id):
         await call.answer("Нет доступа", show_alert=True)
         await state.clear()
+        return
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="WireGuard", callback_data=f"subs:protocol:{PROTOCOL_WIREGUARD}")
+    kb.button(text="3xUI", callback_data=f"subs:protocol:{PROTOCOL_XUI}")
+    kb.button(text="◀️ К списку", callback_data="subs:back_to_list")
+    kb.button(text="❌ Отмена", callback_data="subs:cancel")
+    kb.adjust(1)
+
+    await call.message.answer("Выберите протокол для новой подписки:", reply_markup=kb.as_markup())
+    await call.answer()
+    await state.set_state(SubsFSM.choosing_protocol)
+
+
+@admin_subs_router.callback_query(SubsFSM.choosing_protocol, F.data.startswith("subs:protocol:"))
+async def create_new_pick_protocol(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        await state.clear()
+        return
+
+    protocol = call.data.split(":")[-1]
+    if protocol not in {PROTOCOL_WIREGUARD, PROTOCOL_XUI}:
+        await call.answer("Некорректный протокол", show_alert=True)
+        return
+
+    await state.update_data(protocol=protocol)
+
+    if protocol == PROTOCOL_XUI:
+        await state.update_data(server_region=XUI_REGION, server_region_id=XUI_REGION_ID)
+        kb = months_kb(prefix="subs:new_months")
+        await call.message.answer("На сколько месяцев выдать подписку 3xUI?", reply_markup=kb.as_markup())
+        await call.answer()
+        await state.set_state(SubsFSM.choosing_new_months)
         return
 
     async with async_session() as session:
@@ -341,6 +387,7 @@ async def create_new_finish(call: CallbackQuery, state: FSMContext):
 
     data = await state.get_data()
     tg_id = int(data["tg_id"])
+    protocol = data.get("protocol", PROTOCOL_WIREGUARD)
     region = data["server_region"]
     region_id = int(data["server_region_id"])
 
@@ -355,11 +402,14 @@ async def create_new_finish(call: CallbackQuery, state: FSMContext):
             user = ures.scalar_one_or_none()
             username = user.username if user else None
 
-            sres = await session.execute(
-                select(Server).where(Server.region == region, Server.region_id == region_id, Server.is_active == True)
-            )
-            server = sres.scalar_one_or_none()
-            if not server:
+            server = None
+            if protocol == PROTOCOL_WIREGUARD:
+                sres = await session.execute(
+                    select(Server).where(Server.region == region, Server.region_id == region_id, Server.is_active == True)
+                )
+                server = sres.scalar_one_or_none()
+
+            if protocol == PROTOCOL_WIREGUARD and not server:
                 await call.message.answer("Сервер не найден или не активен.")
                 await call.answer()
                 return
@@ -372,6 +422,7 @@ async def create_new_finish(call: CallbackQuery, state: FSMContext):
                 expiry_date=expiry_date,
                 server_region=region,
                 server_region_id=region_id,
+                protocol=protocol,
                 notif_oneday=False,
                 note="manual_add",
             )
@@ -379,22 +430,27 @@ async def create_new_finish(call: CallbackQuery, state: FSMContext):
             await session.flush()
             new_sub_id = int(new_sub.id)
 
-            url = f"https://{server.host_ip}:{server.port}"
-            password = server.password
-
-            await add_client_wg(client_name, url, password)
-            await get_config_wg(client_name, url, password)
-            await asyncio.sleep(1)
+            access = await create_vpn_access(
+                protocol=protocol,
+                client_name=client_name,
+                expiry_date=expiry_date,
+                tg_id=tg_id,
+                username=username,
+                server=server,
+            )
 
             await session.execute(
-                update(Subscribers).where(Subscribers.id == new_sub_id).values(file_name=client_name)
+                update(Subscribers)
+                .where(Subscribers.id == new_sub_id)
+                .values(file_name=client_name, xui_sub_id=access.xui_sub_id)
             )
             await session.commit()
     except Exception:
         logger.exception(
-            "Ошибка ручной выдачи подписки: admin=%s target_tg_id=%s region=%s region_id=%s months=%s",
+            "Ошибка ручной выдачи подписки: admin=%s target_tg_id=%s protocol=%s region=%s region_id=%s months=%s",
             _admin_actor(call.from_user),
             tg_id,
+            protocol,
             region,
             region_id,
             months,
@@ -404,10 +460,11 @@ async def create_new_finish(call: CallbackQuery, state: FSMContext):
         return
 
     logger.info(
-        "Админ %s выдал подписку: target_tg_id=%s sub_id=%s region=%s region_id=%s months=%s expiry=%s file=%s",
+        "Админ %s выдал подписку: target_tg_id=%s sub_id=%s protocol=%s region=%s region_id=%s months=%s expiry=%s client=%s",
         _admin_actor(call.from_user),
         tg_id,
         new_sub_id,
+        protocol,
         region,
         region_id,
         months,
@@ -417,11 +474,13 @@ async def create_new_finish(call: CallbackQuery, state: FSMContext):
     await call.message.answer(
         f"✅ Подписка создана.\n"
         f"ID: <b>{new_sub_id}</b>\n"
-        f"Сервер: <b>{region} №{region_id}</b>\n"
+        f"Протокол: <b>{get_protocol_label(protocol)}</b>\n"
+        f"Сервис: <b>{format_service_location(protocol, region, region_id)}</b>\n"
         f"До: <b>{expiry_date}</b>\n"
-        f"Файл: <b>{client_name}.conf</b>",
+        f"Клиент: <b>{client_name}</b>",
         parse_mode="HTML",
     )
+    await send_access_to_user(call.message, access)
     await call.answer()
 
     # вернуться в список (обновится)
@@ -500,11 +559,24 @@ async def extend_finish(call: CallbackQuery, state: FSMContext):
 
             current_exp = parse_date(sub.expiry_date)
             new_exp = (current_exp + timedelta(days=months * 30)).strftime(DATE_FMT)
+            protocol = get_record_protocol(sub)
+            client_name = sub.file_name
 
             await session.execute(
                 update(Subscribers).where(Subscribers.id == sub_id).values(expiry_date=new_exp, note="manual_update")
             )
             await session.commit()
+        try:
+            await update_vpn_expiry(protocol=protocol, client_name=client_name, expiry_date=new_exp)
+        except Exception:
+            logger.exception(
+                "Ошибка синхронизации срока после админского продления: admin=%s sub_id=%s protocol=%s client=%s",
+                _admin_actor(call.from_user),
+                sub_id,
+                protocol,
+                client_name,
+            )
+            await call.message.answer("⚠️ Дата в БД обновлена, но срок на 3xUI не синхронизирован.")
     except Exception:
         logger.exception(
             "Ошибка продления подписки админом: admin=%s target_tg_id=%s sub_id=%s months=%s",
@@ -518,12 +590,13 @@ async def extend_finish(call: CallbackQuery, state: FSMContext):
         return
 
     logger.info(
-        "Админ %s продлил подписку: target_tg_id=%s sub_id=%s months=%s new_expiry=%s",
+        "Админ %s продлил подписку: target_tg_id=%s sub_id=%s months=%s new_expiry=%s protocol=%s",
         _admin_actor(call.from_user),
         tg_id,
         sub_id,
         months,
         new_exp,
+        protocol,
     )
     await call.message.answer(
         f"✅ Подписка <b>{sub_id}</b> продлена на <b>{months}</b> мес.\nНовая дата: <b>{new_exp}</b>",
@@ -613,11 +686,24 @@ async def reduce_finish(message: Message, state: FSMContext):
                 return
 
             new_exp = new_exp_dt.strftime(DATE_FMT)
+            protocol = get_record_protocol(sub)
+            client_name = sub.file_name
 
             await session.execute(
                 update(Subscribers).where(Subscribers.id == sub_id).values(expiry_date=new_exp, note="manual_delite")
             )
             await session.commit()
+        try:
+            await update_vpn_expiry(protocol=protocol, client_name=client_name, expiry_date=new_exp)
+        except Exception:
+            logger.exception(
+                "Ошибка синхронизации срока после админского уменьшения: admin=%s sub_id=%s protocol=%s client=%s",
+                _admin_actor(message.from_user),
+                sub_id,
+                protocol,
+                client_name,
+            )
+            await message.answer("⚠️ Дата в БД обновлена, но срок на 3xUI не синхронизирован.")
     except Exception:
         logger.exception(
             "Ошибка уменьшения подписки админом: admin=%s target_tg_id=%s sub_id=%s days=%s",
@@ -630,12 +716,13 @@ async def reduce_finish(message: Message, state: FSMContext):
         return
 
     logger.info(
-        "Админ %s уменьшил подписку: target_tg_id=%s sub_id=%s days=%s new_expiry=%s",
+        "Админ %s уменьшил подписку: target_tg_id=%s sub_id=%s days=%s new_expiry=%s protocol=%s",
         _admin_actor(message.from_user),
         tg_id,
         sub_id,
         days,
         new_exp,
+        protocol,
     )
     await message.answer(
         f"✅ Подписка <b>{sub_id}</b> уменьшена на <b>{days}</b> дней.\nНовая дата: <b>{new_exp}</b>",
@@ -679,9 +766,10 @@ async def delete_menu(call: CallbackQuery, state: FSMContext):
 
     await call.message.answer(
         f"Удалить подписку <b>{sub_id}</b>?\n"
-        f"Сервер: <b>{sub.server_region} №{sub.server_region_id}</b>\n"
+        f"Протокол: <b>{get_protocol_label(get_record_protocol(sub))}</b>\n"
+        f"Сервис: <b>{format_service_location(get_record_protocol(sub), sub.server_region, sub.server_region_id)}</b>\n"
         f"Expiry: <b>{sub.expiry_date}</b>\n"
-        f"Файл: <b>{sub.file_name}</b>",
+        f"Клиент: <b>{sub.file_name}</b>",
         parse_mode="HTML",
         reply_markup=kb.as_markup(),
     )
@@ -720,22 +808,18 @@ async def delete_confirm(call: CallbackQuery, state: FSMContext):
             client_name = sub.file_name
             region = sub.server_region
             region_id = sub.server_region_id
+            protocol = get_record_protocol(sub)
+            server = None
 
-            srv_res = await session.execute(
-                select(Server).where(
-                    Server.region == region,
-                    Server.region_id == region_id,
-                    Server.is_active == True
+            if protocol == PROTOCOL_WIREGUARD:
+                srv_res = await session.execute(
+                    select(Server).where(
+                        Server.region == region,
+                        Server.region_id == region_id,
+                        Server.is_active == True
+                    )
                 )
-            )
-            server = srv_res.scalar_one_or_none()
-            if not server:
-                # всё равно удалим из БД и локальный файл, но WG не тронем
-                url = None
-                password = None
-            else:
-                url = f"https://{server.host_ip}:{server.port}"
-                password = server.password
+                server = srv_res.scalar_one_or_none()
 
             # 2) удаляем запись из БД
             await session.execute(delete(Subscribers).where(Subscribers.id == sub_id))
@@ -751,50 +835,45 @@ async def delete_confirm(call: CallbackQuery, state: FSMContext):
         await call.answer()
         return
 
-    # 3) удаляем локальный файл конфига (не критично если нет)
-    # пользователь писал app/auth/{client_name}, но обычно .conf — удалим оба варианта
     removed_local = False
-    for path in (f"app/auth/{client_name}.conf", f"app/auth/{client_name}"):
-        try:
-            if os.path.exists(path):
-                os.remove(path)
-                removed_local = True
-        except Exception:
-            logger.exception(
-                "Ошибка удаления локального файла конфигурации: sub_id=%s path=%s",
-                sub_id,
-                path,
-            )
-
-    # 4) удаляем клиента на сервере WG (если сервер найден)
     removed_remote = False
-    if url and password:
-        try:
-            await remove_client_wg(client_name, url, password)
-            removed_remote = True
-        except Exception:
-            logger.exception(
-                "Ошибка удаления клиента на WG: sub_id=%s client=%s url=%s",
-                sub_id,
-                client_name,
-                url,
-            )
-            removed_remote = False
+    try:
+        removed_local, removed_remote = await remove_vpn_access(
+            protocol=protocol,
+            client_name=client_name,
+            server=server,
+        )
+    except Exception:
+        logger.exception(
+            "Ошибка удаления клиента на VPN-сервисе: sub_id=%s protocol=%s client=%s",
+            sub_id,
+            protocol,
+            client_name,
+        )
+        removed_remote = False
 
-    msg = [f"🗑 Подписка <b>{sub_id}</b> удалена.", f"Client: <b>{client_name}</b>"]
-    msg.append(f"Локальный файл: {'✅' if removed_local else 'ℹ️ не найден/не удалён'}")
-    if url and password:
-        msg.append(f"Удаление на сервере WG: {'✅' if removed_remote else '⚠️ ошибка/не удалено'}")
+    msg = [
+        f"🗑 Подписка <b>{sub_id}</b> удалена.",
+        f"Протокол: <b>{get_protocol_label(protocol)}</b>",
+        f"Client: <b>{client_name}</b>",
+    ]
+    if protocol == PROTOCOL_WIREGUARD:
+        msg.append(f"Локальный файл: {'✅' if removed_local else 'ℹ️ не найден/не удалён'}")
+        if server:
+            msg.append(f"Удаление на сервере WG: {'✅' if removed_remote else '⚠️ ошибка/не удалено'}")
+        else:
+            msg.append("Удаление на сервере WG: ⚠️ сервер не найден (в БД), пропущено")
     else:
-        msg.append("Удаление на сервере WG: ⚠️ сервер не найден (в БД), пропущено")
+        msg.append(f"Удаление в 3xUI: {'✅' if removed_remote else '⚠️ ошибка/не удалено'}")
 
     await call.message.answer("\n".join(msg), parse_mode="HTML")
     await call.answer()
     logger.info(
-        "Админ %s удалил подписку: target_tg_id=%s sub_id=%s client=%s removed_local=%s removed_remote=%s server_region=%s server_region_id=%s",
+        "Админ %s удалил подписку: target_tg_id=%s sub_id=%s protocol=%s client=%s removed_local=%s removed_remote=%s server_region=%s server_region_id=%s",
         _admin_actor(call.from_user),
         tg_id,
         sub_id,
+        protocol,
         client_name,
         removed_local,
         removed_remote,

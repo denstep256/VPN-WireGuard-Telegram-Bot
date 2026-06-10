@@ -9,6 +9,7 @@ from sqlalchemy import select, update
 from app.addons.utilits import parse_date_value
 from app.database.models import Subscribers, async_session
 from app.planners.scheduler_runtime import get_scheduler
+from app.vpn.provisioning import format_service_location, get_protocol_label, get_record_protocol
 
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,8 @@ async def check_subscriptions(bot: Bot):
 
             message = (
                 "⏳ <b>Напоминание о подписке</b>\n\n"
-                f"Срок доступа к серверу <b>{subscription.server_region} №{subscription.server_region_id}</b> "
+                f"Протокол: <b>{get_protocol_label(get_record_protocol(subscription))}</b>\n"
+                f"Срок доступа к сервису <b>{format_service_location(get_record_protocol(subscription), subscription.server_region, subscription.server_region_id)}</b> "
                 f"заканчивается <b>{expiry.isoformat()}</b>.\n"
                 "Продлите сейчас, чтобы не терять подключение."
             )

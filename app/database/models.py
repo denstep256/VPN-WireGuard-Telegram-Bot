@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 import logging
 
-from sqlalchemy import BigInteger, String, Boolean, UniqueConstraint, DateTime, Integer, ForeignKey, inspect
+from sqlalchemy import BigInteger, String, Boolean, UniqueConstraint, DateTime, Integer, ForeignKey, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 
@@ -50,6 +50,8 @@ class Subscribers(Base):
     expiry_date: Mapped[str] = mapped_column(String(25))
     server_region: Mapped[str] = mapped_column(String(25))
     server_region_id: Mapped[int] = mapped_column()
+    protocol: Mapped[str] = mapped_column(String(25), default="wireguard", server_default="wireguard")
+    xui_sub_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     notif_oneday = mapped_column(Boolean, default=False)
     #note нужно для ручного добавления подписки
     note: Mapped[str | None] = mapped_column(String, nullable=True, default="")
@@ -63,6 +65,8 @@ class TestPeriod(Base):
     file_name: Mapped[str] = mapped_column(String(25))
     subscription: Mapped[str] = mapped_column(String(25))
     expiry_date: Mapped[str] = mapped_column(String(25))
+    protocol: Mapped[str] = mapped_column(String(25), default="wireguard", server_default="wireguard")
+    xui_sub_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     notif_oneday = mapped_column(Boolean, default=False)
 
 class Server(Base):
@@ -128,11 +132,31 @@ class PromoRedemption(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+
+async def _ensure_column(conn, table_name: str, column_name: str, ddl: str) -> None:
+    columns = await conn.run_sync(
+        lambda sync_conn: {col["name"] for col in inspect(sync_conn).get_columns(table_name)}
+    )
+    if column_name in columns:
+        return
+
+    await conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {ddl}"))
+    logger.info("Database migration applied: %s.%s added.", table_name, column_name)
+
+
+async def _run_lightweight_migrations(conn) -> None:
+    await _ensure_column(conn, "subscribers", "protocol", "protocol VARCHAR(25) DEFAULT 'wireguard'")
+    await _ensure_column(conn, "subscribers", "xui_sub_id", "xui_sub_id VARCHAR(64)")
+    await _ensure_column(conn, "test_period", "protocol", "protocol VARCHAR(25) DEFAULT 'wireguard'")
+    await _ensure_column(conn, "test_period", "xui_sub_id", "xui_sub_id VARCHAR(64)")
+
+
 async def async_main():
     try:
         logger.info("Database initialization started: create_all for declared models.")
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await _run_lightweight_migrations(conn)
             table_names = await conn.run_sync(lambda sync_conn: inspect(sync_conn).get_table_names())
         logger.info(
             "Database initialization completed: %s tables ensured (%s).",

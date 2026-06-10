@@ -17,7 +17,7 @@ from openpyxl.utils import get_column_letter
 
 import app.admin.admin_keyboard as kb
 from app.users.keyboard import get_main_keyboard
-from app.wg_api.wg_api import get_client_count_wg
+from app.vpn.provisioning import PROTOCOL_WIREGUARD, PROTOCOL_XUI, get_vpn_client_count
 from config import ADMIN_ID
 from app.database.models import async_session, TestPeriod, User, Subscribers, Payments, Server
 
@@ -148,34 +148,39 @@ async def clients_on_servers_wg(message: Message):
         )
         servers = res.scalars().all()
 
-    if not servers:
-        await message.answer("Нет активных серверов.")
-        return
-
     total_clients = 0
-    lines = ["📊 <b>Клиенты WireGuard по серверам</b>\n"]
+    lines = ["📊 <b>Клиенты VPN по сервисам</b>\n", "<b>WireGuard:</b>"]
 
-    for s in servers:
-        url = f"https://{s.host_ip}:{s.port}"
+    if not servers:
+        lines.append("• нет активных серверов")
+    else:
+        for s in servers:
+            try:
+                count = await get_vpn_client_count(PROTOCOL_WIREGUARD, s)
+                total_clients += int(count)
+                lines.append(f"• <b>{s.region} №{s.region_id}</b>: <b>{count}</b>")
+            except Exception:
+                logger.exception(
+                    "Ошибка запроса клиентов WG: admin=%s region=%s region_id=%s host=%s",
+                    _admin_actor(message.from_user),
+                    s.region,
+                    s.region_id,
+                    s.host_ip,
+                )
+                lines.append(f"• <b>{s.region} №{s.region_id}</b>: ⚠️ ошибка")
 
-        try:
-            count = await get_client_count_wg(url, s.password)
-            total_clients += int(count)
-            lines.append(f"• <b>{s.region} №{s.region_id}</b>: <b>{count}</b>")
-        except Exception:
-            logger.exception(
-                "Ошибка запроса клиентов WG: admin=%s region=%s region_id=%s host=%s",
-                _admin_actor(message.from_user),
-                s.region,
-                s.region_id,
-                s.host_ip,
-            )
-            lines.append(f"• <b>{s.region} №{s.region_id}</b>: ⚠️ ошибка")
+    try:
+        xui_count = await get_vpn_client_count(PROTOCOL_XUI)
+        total_clients += int(xui_count)
+        lines.append(f"\n<b>3xUI:</b>\n• <b>Панель</b>: <b>{xui_count}</b>")
+    except Exception:
+        logger.exception("Ошибка запроса клиентов 3xUI: admin=%s", _admin_actor(message.from_user))
+        lines.append("\n<b>3xUI:</b>\n• <b>Панель</b>: ⚠️ ошибка")
 
     lines.append(f"\n<b>Итого клиентов:</b> {total_clients}")
 
     logger.info(
-        "Админ %s получил статистику клиентов WG: серверов=%s всего_клиентов=%s",
+        "Админ %s получил статистику клиентов VPN: серверов=%s всего_клиентов=%s",
         _admin_actor(message.from_user),
         len(servers),
         total_clients,
@@ -235,6 +240,8 @@ async def subscribers_excel(message: Message):
                 Subscribers.expiry_date,
                 Subscribers.server_region,
                 Subscribers.server_region_id,
+                Subscribers.protocol,
+                Subscribers.xui_sub_id,
                 Subscribers.notif_oneday,
                 Subscribers.note,
             ).order_by(Subscribers.id)
@@ -250,7 +257,7 @@ async def subscribers_excel(message: Message):
 
     by_region: dict[str, int] = {}
     for r in rows:
-        # r: (id, tg_id, username, file_name, subscription, expiry_date, server_region, server_region_id, notif_oneday, note)
+        # r: (id, tg_id, username, file_name, subscription, expiry_date, server_region, server_region_id, protocol, xui_sub_id, notif_oneday, note)
         exp = safe_parse_date(r[5])
         if exp is None:
             bad_dates += 1
@@ -260,7 +267,7 @@ async def subscribers_excel(message: Message):
             else:
                 expired += 1
 
-        region_key = f"{r[6]} #{r[7]}"
+        region_key = f"{r[8]} | {r[6]} #{r[7]}"
         by_region[region_key] = by_region.get(region_key, 0) + 1
 
     top_regions = sorted(by_region.items(), key=lambda x: x[1], reverse=True)[:5]
@@ -284,7 +291,7 @@ async def subscribers_excel(message: Message):
         headers=[
             "id", "tg_id", "username", "file_name", "subscription",
             "expiry_date", "server_region", "server_region_id",
-            "notif_oneday", "note"
+            "protocol", "xui_sub_id", "notif_oneday", "note"
         ],
         rows=rows,
     )
@@ -314,6 +321,8 @@ async def testperiod_excel(message: Message):
                 TestPeriod.file_name,
                 TestPeriod.subscription,
                 TestPeriod.expiry_date,
+                TestPeriod.protocol,
+                TestPeriod.xui_sub_id,
                 TestPeriod.notif_oneday,
             ).order_by(TestPeriod.id)
         )
@@ -350,7 +359,7 @@ async def testperiod_excel(message: Message):
         message=message,
         filename="test_period.xlsx",
         sheet_name="test_period",
-        headers=["id", "tg_id", "username", "file_name", "subscription", "expiry_date", "notif_oneday"],
+        headers=["id", "tg_id", "username", "file_name", "subscription", "expiry_date", "protocol", "xui_sub_id", "notif_oneday"],
         rows=rows,
     )
     logger.info(

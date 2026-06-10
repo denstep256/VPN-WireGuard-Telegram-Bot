@@ -6,10 +6,16 @@ from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select, update
 import logging
 
-from app.addons.utilits import delete_file_by_name, parse_date_value
+from app.addons.utilits import parse_date_value
 from app.database.models import Server, Subscribers, async_session
 from app.planners.scheduler_runtime import get_scheduler
-from app.wg_api.wg_api import remove_client_wg
+from app.vpn.provisioning import (
+    PROTOCOL_WIREGUARD,
+    format_service_location,
+    get_protocol_label,
+    get_record_protocol,
+    remove_vpn_access,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -37,7 +43,8 @@ async def check_subscriptions_subs(bot: Bot):
 
             message = (
                 "⚠️ <b>Срок подписки истёк сегодня</b>\n\n"
-                f"Сервер: <b>{subscription.server_region} №{subscription.server_region_id}</b>\n"
+                f"Протокол: <b>{get_protocol_label(get_record_protocol(subscription))}</b>\n"
+                f"Сервис: <b>{format_service_location(get_record_protocol(subscription), subscription.server_region, subscription.server_region_id)}</b>\n"
                 "Чтобы вернуть доступ, продлите подписку одним нажатием."
             )
             renew_kb = InlineKeyboardMarkup(
@@ -67,39 +74,33 @@ async def check_subscriptions_subs(bot: Bot):
                     subscription.tg_id,
                 )
 
+            protocol = get_record_protocol(subscription)
+            server = None
+            if protocol == PROTOCOL_WIREGUARD:
+                server_result = await session.execute(
+                    select(Server).where(
+                        Server.region == subscription.server_region,
+                        Server.region_id == subscription.server_region_id,
+                    )
+                )
+                server = server_result.scalar_one_or_none()
+
             try:
-                delete_file_by_name(subscription.file_name)
+                await remove_vpn_access(
+                    protocol=protocol,
+                    client_name=subscription.file_name,
+                    server=server,
+                )
             except Exception:
+                failed_remove_remote += 1
                 logger.exception(
-                    "Failed to delete local file for expired subscription: sub_id=%s file_name=%s",
+                    "Failed to remove VPN client for expired subscription: sub_id=%s protocol=%s file_name=%s region=%s region_id=%s",
                     subscription.id,
+                    protocol,
                     subscription.file_name,
+                    subscription.server_region,
+                    subscription.server_region_id,
                 )
-
-            server_result = await session.execute(
-                select(Server).where(
-                    Server.region == subscription.server_region,
-                    Server.region_id == subscription.server_region_id,
-                )
-            )
-            server = server_result.scalar_one_or_none()
-
-            if server:
-                try:
-                    await remove_client_wg(
-                        subscription.file_name,
-                        f"https://{server.host_ip}:{server.port}",
-                        server.password,
-                    )
-                except Exception:
-                    failed_remove_remote += 1
-                    logger.exception(
-                        "Failed to remove WireGuard client for expired subscription: sub_id=%s file_name=%s region=%s region_id=%s",
-                        subscription.id,
-                        subscription.file_name,
-                        subscription.server_region,
-                        subscription.server_region_id,
-                    )
 
             await session.execute(
                 update(Subscribers)
