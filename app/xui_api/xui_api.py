@@ -43,6 +43,49 @@ def _build_base_url() -> str:
     return urlunsplit((parsed.scheme, netloc, base_path, "", "")).rstrip("/")
 
 
+def _with_scheme(address: str) -> str:
+    if address.startswith(("http://", "https://")):
+        return address
+    return f"http://{address}"
+
+
+def _replace_port(address: str, port: int | str | None, *, keep_path: bool = True) -> str:
+    address = _with_scheme(str(address or "").strip().rstrip("/"))
+    parsed = urlsplit(address)
+    netloc = parsed.netloc
+
+    if port not in (None, "", 0, "0"):
+        host = parsed.hostname or parsed.netloc
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        netloc = f"{host}:{int(port)}"
+
+    path = parsed.path if keep_path else ""
+    return urlunsplit((parsed.scheme, netloc, path.rstrip("/"), "", "")).rstrip("/")
+
+
+def _subscription_base_url(settings: dict[str, Any]) -> str:
+    configured_address = str(getattr(config, "XUI_SUBSCRIPTION_ADDRESS", "") or "").strip()
+    configured_port = getattr(config, "XUI_SUBSCRIPTION_PORT", 0)
+    if configured_address:
+        return _replace_port(configured_address, configured_port, keep_path=True)
+
+    settings_uri = str(settings.get("subURI") or "").strip()
+    if settings_uri:
+        return _replace_port(settings_uri, configured_port or None, keep_path=True)
+
+    panel_address = str(getattr(config, "XUI_PANEL_ADDRESS", "") or "").strip()
+    subscription_port = configured_port or settings.get("subPort") or getattr(config, "XUI_PANEL_PORT", 0)
+    return _replace_port(panel_address, subscription_port, keep_path=False)
+
+
+def _subscription_path(settings: dict[str, Any], sub_id: str) -> str:
+    configured_path = str(getattr(config, "XUI_SUBSCRIPTION_PATH", "") or "").strip()
+    path = configured_path or str(settings.get("subPath") or "/sub/").strip()
+    path = "/" + path.strip("/")
+    return f"{path}/{quote(sub_id, safe='')}"
+
+
 def _headers() -> dict[str, str]:
     token = str(getattr(config, "XUI_API_TOKEN", "") or "").strip()
     if not token:
@@ -151,6 +194,11 @@ class XUIClient:
             if item.get("id") is not None and item.get("protocol") in SUPPORTED_LINK_PROTOCOLS
         ]
 
+    async def get_all_settings(self) -> dict[str, Any]:
+        data = await self._request("POST", "/panel/api/setting/all")
+        obj = (data or {}).get("obj")
+        return dict(obj) if isinstance(obj, dict) else {}
+
     async def add_client(
         self,
         *,
@@ -228,6 +276,10 @@ class XUIClient:
         data = await self._request("GET", f"/panel/api/clients/subLinks/{quote(sub_id, safe='')}")
         return list((data or {}).get("obj") or [])
 
+    async def get_subscription_url(self, sub_id: str) -> str:
+        settings = await self.get_all_settings()
+        return f"{_subscription_base_url(settings)}{_subscription_path(settings, sub_id)}"
+
     async def get_client_traffic(self, email: str) -> dict[str, Any] | None:
         data = await self._request("GET", f"/panel/api/clients/traffic/{quote(email, safe='')}")
         obj = (data or {}).get("obj")
@@ -263,12 +315,20 @@ async def remove_client_xui(email: str) -> dict[str, Any]:
     return await XUIClient().delete_client(email)
 
 
+async def get_client_xui(email: str) -> dict[str, Any] | None:
+    return await XUIClient().get_client(email)
+
+
 async def get_client_links_xui(email: str) -> list[str]:
     return await XUIClient().get_client_links(email)
 
 
 async def get_subscription_links_xui(sub_id: str) -> list[str]:
     return await XUIClient().get_subscription_links(sub_id)
+
+
+async def get_subscription_url_xui(sub_id: str) -> str:
+    return await XUIClient().get_subscription_url(sub_id)
 
 
 async def get_client_traffic_xui(email: str) -> dict[str, Any] | None:

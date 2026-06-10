@@ -16,9 +16,9 @@ from app.wg_api.wg_api import add_client_wg, get_config_wg, remove_client_wg
 from app.xui_api.xui_api import (
     add_client_xui,
     get_client_count_xui,
-    get_client_links_xui,
+    get_client_xui,
     get_client_traffic_xui,
-    get_subscription_links_xui,
+    get_subscription_url_xui,
     remove_client_xui,
     update_client_expiry_xui,
 )
@@ -43,6 +43,7 @@ class AccessResult:
     client_name: str
     xui_sub_id: str | None = None
     local_file_path: str | None = None
+    subscription_url: str | None = None
     links: list[str] | None = None
 
 
@@ -134,8 +135,8 @@ async def create_vpn_access(
         sub_id=sub_id,
         comment=comment,
     )
-    links = await _safe_xui_links(client_name, sub_id)
-    return AccessResult(protocol=protocol, client_name=client_name, xui_sub_id=sub_id, links=links)
+    subscription_url = await _safe_xui_subscription_url(client_name, sub_id)
+    return AccessResult(protocol=protocol, client_name=client_name, xui_sub_id=sub_id, subscription_url=subscription_url)
 
 
 async def restore_vpn_access(
@@ -172,8 +173,8 @@ async def restore_vpn_access(
             comment=f"tg:{tg_id} @{username}" if username else f"tg:{tg_id}",
         )
 
-    links = await _safe_xui_links(client_name, sub_id)
-    return AccessResult(protocol=protocol, client_name=client_name, xui_sub_id=sub_id, links=links)
+    subscription_url = await _safe_xui_subscription_url(client_name, sub_id)
+    return AccessResult(protocol=protocol, client_name=client_name, xui_sub_id=sub_id, subscription_url=subscription_url)
 
 
 async def update_vpn_expiry(
@@ -252,23 +253,25 @@ def format_bytes(value: int | str | None) -> str:
     return f"{size:.2f} {units[idx]}"
 
 
-async def _safe_xui_links(email: str, sub_id: str | None = None) -> list[str]:
-    try:
-        links = await get_client_links_xui(email)
-        if links:
-            return links
-    except Exception:
-        logger.exception("Failed to fetch 3xUI client links: email=%s", email)
-
-    if sub_id:
+async def _safe_xui_subscription_url(email: str, sub_id: str | None = None) -> str | None:
+    if not sub_id:
         try:
-            return await get_subscription_links_xui(sub_id)
+            client = await get_client_xui(email)
+            sub_id = str((client or {}).get("subId") or "").strip() or None
         except Exception:
-            logger.exception("Failed to fetch 3xUI subscription links: email=%s sub_id=%s", email, sub_id)
-    return []
+            logger.exception("Failed to fetch 3xUI client for subscription URL: email=%s", email)
+
+    if not sub_id:
+        return None
+
+    try:
+        return await get_subscription_url_xui(sub_id)
+    except Exception:
+        logger.exception("Failed to build 3xUI subscription URL: email=%s sub_id=%s", email, sub_id)
+        return None
 
 
-def build_xui_links_text(client_name: str, xui_sub_id: str | None, links: list[str]) -> str:
+def build_xui_subscription_text(client_name: str, xui_sub_id: str | None, subscription_url: str | None) -> str:
     lines = [
         "🔗 <b>Доступ 3xUI</b>",
         f"Клиент: <code>{html.escape(client_name)}</code>",
@@ -276,13 +279,13 @@ def build_xui_links_text(client_name: str, xui_sub_id: str | None, links: list[s
     if xui_sub_id:
         lines.append(f"Sub ID: <code>{html.escape(xui_sub_id)}</code>")
 
-    if links:
+    if subscription_url:
         lines.append("")
-        lines.append("<b>Ссылки подключения:</b>")
-        lines.extend(f"<code>{html.escape(link)}</code>" for link in links)
+        lines.append("<b>Ссылка подписки:</b>")
+        lines.append(f"<code>{html.escape(subscription_url)}</code>")
     else:
         lines.append("")
-        lines.append("⚠️ Панель создала клиента, но не вернула ссылки подключения.")
+        lines.append("⚠️ Панель создала клиента, но ссылку подписки построить не удалось.")
     return "\n".join(lines)
 
 
@@ -292,15 +295,15 @@ async def send_access_to_user(message: Message, access: AccessResult) -> None:
         await message.answer_document(FSInputFile(file_path))
         return
 
-    links = access.links or await _safe_xui_links(access.client_name, access.xui_sub_id)
-    text = build_xui_links_text(access.client_name, access.xui_sub_id, links)
+    subscription_url = access.subscription_url or await _safe_xui_subscription_url(access.client_name, access.xui_sub_id)
+    text = build_xui_subscription_text(access.client_name, access.xui_sub_id, subscription_url)
     if len(text) <= 3900:
         await message.answer(text, parse_mode="HTML")
         return
 
-    raw = "\n".join(links) if links else text
+    raw = subscription_url or text
     await message.answer_document(
-        BufferedInputFile(raw.encode("utf-8"), filename=f"{access.client_name}_3xui_links.txt")
+        BufferedInputFile(raw.encode("utf-8"), filename=f"{access.client_name}_3xui_subscription.txt")
     )
 
 
@@ -320,13 +323,13 @@ async def send_existing_access_to_user(message: Message, record) -> None:
         await message.answer_document(FSInputFile(file_path))
         return
 
-    links = await _safe_xui_links(record.file_name, getattr(record, "xui_sub_id", None))
-    text = build_xui_links_text(record.file_name, getattr(record, "xui_sub_id", None), links)
+    subscription_url = await _safe_xui_subscription_url(record.file_name, getattr(record, "xui_sub_id", None))
+    text = build_xui_subscription_text(record.file_name, getattr(record, "xui_sub_id", None), subscription_url)
     if len(text) <= 3900:
         await message.answer(text, parse_mode="HTML")
         return
     await message.answer_document(
-        BufferedInputFile("\n".join(links).encode("utf-8"), filename=f"{record.file_name}_3xui_links.txt")
+        BufferedInputFile((subscription_url or text).encode("utf-8"), filename=f"{record.file_name}_3xui_subscription.txt")
     )
 
 

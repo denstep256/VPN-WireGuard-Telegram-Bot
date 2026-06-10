@@ -19,6 +19,24 @@ from app.vpn.provisioning import (
 
 user_renew_router = Router()
 
+
+async def _send_trial_access(call: CallbackQuery, trial: TestPeriod) -> None:
+    protocol = get_record_protocol(trial)
+    text = (
+        "📌 <b>Пробная подписка</b>\n\n"
+        f"🛡️ <b>Протокол:</b> {get_protocol_label(protocol)}\n"
+        f"⏳ <b>Активна до:</b> {trial.expiry_date}\n"
+    )
+
+    if protocol != PROTOCOL_WIREGUARD:
+        monitoring_lines = await build_xui_monitoring_lines(trial.file_name)
+        if monitoring_lines:
+            text += "\n" + "\n".join(monitoring_lines) + "\n"
+
+    await call.message.answer(text, parse_mode="HTML")
+    await send_existing_access_to_user(call.message, trial)
+
+
 @user_renew_router.message(F.text == BUTTON_TEXTS["my_subs"])
 async def check_subscribe_button(message: Message):
     tg_id = message.from_user.id
@@ -50,9 +68,9 @@ async def check_subscribe_button(message: Message):
 
     # Пробные подписки
     for test in test_subs:
-        text = f"Пробная подписка активна до {test.expiry_date}"
-        # Используем уникальный префикс, чтобы отличать
-        callback_data = "no_renew_test"
+        protocol_label = get_protocol_label(get_record_protocol(test))
+        text = f"Пробная {protocol_label} — до {test.expiry_date}"
+        callback_data = f"trial_sub|{test.id}"
         buttons.append([InlineKeyboardButton(text=text, callback_data=callback_data)])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -61,10 +79,47 @@ async def check_subscribe_button(message: Message):
 
 @user_renew_router.callback_query(F.data == "no_renew_test")
 async def handle_test_sub_click(call: CallbackQuery):
-    await call.answer(
-        "❌ Пробную подписку нельзя продлить.",
-        show_alert=True
-    )
+    async with async_session() as session:
+        res = await session.execute(
+            select(TestPeriod).where(
+                TestPeriod.tg_id == call.from_user.id,
+                TestPeriod.subscription == "trial",
+            )
+        )
+        trial = res.scalars().first()
+
+    if not trial:
+        await call.answer("❌ Пробная подписка не найдена.", show_alert=True)
+        return
+
+    await _send_trial_access(call, trial)
+    await call.answer()
+
+
+@user_renew_router.callback_query(F.data.startswith("trial_sub|"))
+async def handle_trial_sub_click(call: CallbackQuery):
+    parts = call.data.split("|")
+    if len(parts) != 2 or not parts[1].isdigit():
+        await call.answer("❌ Некорректные данные.", show_alert=True)
+        return
+
+    trial_id = int(parts[1])
+    async with async_session() as session:
+        res = await session.execute(
+            select(TestPeriod).where(
+                TestPeriod.id == trial_id,
+                TestPeriod.tg_id == call.from_user.id,
+                TestPeriod.subscription == "trial",
+            )
+        )
+        trial = res.scalar_one_or_none()
+
+    if not trial:
+        await call.answer("❌ Пробная подписка не найдена.", show_alert=True)
+        return
+
+    await _send_trial_access(call, trial)
+    await call.answer()
 
 
 @user_renew_router.callback_query(F.data.startswith("renew_sub|"))
