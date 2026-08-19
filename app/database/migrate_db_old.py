@@ -269,7 +269,12 @@ def migrate_subscribers(
     return stats
 
 
-def migrate_test_period(old_conn: sqlite3.Connection, new_conn: sqlite3.Connection) -> TableStats:
+def migrate_test_period(
+    old_conn: sqlite3.Connection,
+    new_conn: sqlite3.Connection,
+    legacy_region: str,
+    legacy_region_id: int,
+) -> TableStats:
     stats = TableStats()
     existing_tg_ids = {
         row[0]
@@ -292,9 +297,10 @@ def migrate_test_period(old_conn: sqlite3.Connection, new_conn: sqlite3.Connecti
         new_conn.execute(
             """
             INSERT INTO test_period (
-                tg_id, username, file_name, subscription, expiry_date, notif_oneday
+                tg_id, username, file_name, subscription, expiry_date, notif_oneday,
+                server_region, server_region_id
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 tg_id,
@@ -303,6 +309,8 @@ def migrate_test_period(old_conn: sqlite3.Connection, new_conn: sqlite3.Connecti
                 normalize_text(subscription, "trial"),
                 normalize_text(expiry_date, ""),
                 1 if bool(notif_oneday) else 0,
+                legacy_region,
+                legacy_region_id,
             ),
         )
         existing_tg_ids.add(tg_id)
@@ -385,7 +393,16 @@ def main() -> int:
         ensure_columns(
             new_conn,
             "test_period",
-            {"tg_id", "username", "file_name", "subscription", "expiry_date", "notif_oneday"},
+            {
+                "tg_id",
+                "username",
+                "file_name",
+                "subscription",
+                "expiry_date",
+                "notif_oneday",
+                "server_region",
+                "server_region_id",
+            },
             "new",
         )
 
@@ -398,7 +415,12 @@ def main() -> int:
             legacy_region=args.legacy_region,
             legacy_region_id=args.legacy_region_id,
         )
-        test_period_stats = migrate_test_period(old_conn, new_conn)
+        test_period_stats = migrate_test_period(
+            old_conn,
+            new_conn,
+            legacy_region=args.legacy_region,
+            legacy_region_id=args.legacy_region_id,
+        )
 
         if args.dry_run:
             new_conn.rollback()

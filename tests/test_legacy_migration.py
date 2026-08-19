@@ -32,7 +32,9 @@ class LegacyMigrationTests(unittest.TestCase):
                 file_name TEXT,
                 subscription TEXT,
                 expiry_date TEXT,
-                notif_oneday INTEGER
+                notif_oneday INTEGER,
+                server_region TEXT,
+                server_region_id INTEGER
             )
             """
         )
@@ -44,13 +46,24 @@ class LegacyMigrationTests(unittest.TestCase):
             ),
         )
 
-        stats = migrate_test_period(old_connection, new_connection)
+        stats = migrate_test_period(
+            old_connection,
+            new_connection,
+            legacy_region="Amsterdam",
+            legacy_region_id=1,
+        )
 
         self.assertEqual(stats.inserted, 1)
         self.assertEqual(stats.skipped_duplicates, 1)
         self.assertEqual(
             new_connection.execute("SELECT COUNT(*) FROM test_period").fetchone()[0],
             1,
+        )
+        self.assertEqual(
+            new_connection.execute(
+                "SELECT server_region, server_region_id FROM test_period"
+            ).fetchone(),
+            ("Amsterdam", 1),
         )
 
 
