@@ -4,14 +4,14 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
-from sqlalchemy import select
+from sqlalchemy import func, select
 from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 
 import app.admin.admin_keyboard as admin_kb
 from app.addons.button_text import BUTTON_TEXTS
 from app.admin.admin_keyboard import cancel_kb
-from app.database.models import PromoCode, async_session
+from app.database.models import PromoCode, User, async_session
 from app.time_utils import utc_now_naive
 from config import ADMIN_ID
 
@@ -54,6 +54,39 @@ def _parse_expiry_input(raw_text: str | None) -> datetime | None:
 def _admin_actor(user) -> str:
     username = user.username or "-"
     return f"{user.id} (@{username})"
+
+
+async def _resolve_promo_owner(session, raw_value: str) -> tuple[int | None, str]:
+    value = (raw_value or "").strip()
+    if value == "0":
+        return None, "общий"
+
+    if value.isdigit():
+        tg_id = int(value)
+        if tg_id <= 0:
+            raise ValueError("TG ID должен быть положительным числом или 0.")
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            raise ValueError("Пользователь с таким TG ID не найден. Сначала он должен запустить бота.")
+        username = f"@{user.username}" if user.username else "без username"
+        return tg_id, f"{username} ({tg_id})"
+
+    username = value.removeprefix("@").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_]{1,64}", username):
+        raise ValueError("Введите корректный username, TG ID или 0.")
+
+    users = list(
+        (
+            await session.scalars(
+                select(User).where(func.lower(User.username) == username.lower())
+            )
+        ).all()
+    )
+    if not users:
+        raise ValueError("Пользователь с таким username не найден. Сначала он должен запустить бота.")
+    if len(users) > 1:
+        raise ValueError("Найдено несколько пользователей с таким username. Используйте TG ID.")
+    return int(users[0].tg_id), f"@{users[0].username} ({users[0].tg_id})"
 
 
 async def _reject_non_admin(message: Message, state: FSMContext) -> bool:
@@ -152,7 +185,8 @@ async def add_promo_max_uses(message: Message, state: FSMContext):
     await state.update_data(max_uses_per_user=max_uses)
     await state.set_state(AddPromoState.waiting_owner)
     await message.answer(
-        "Введите TG ID владельца для персонального промокода.\n"
+        "Введите username или TG ID владельца персонального промокода.\n"
+        "Username можно указать с <code>@</code> или без него.\n"
         "Если код общий — отправьте <code>0</code>."
         f"{CANCEL_HINT}",
         parse_mode="HTML",
@@ -164,14 +198,14 @@ async def add_promo_owner(message: Message, state: FSMContext):
     if await _reject_non_admin(message, state):
         return
     text = (message.text or "").strip()
-    if not text.isdigit():
-        await message.answer("❌ Введите число (TG ID) или 0.")
+    try:
+        async with async_session() as session:
+            owner_tg_id, owner_label = await _resolve_promo_owner(session, text)
+    except ValueError as exc:
+        await message.answer(f"❌ {exc}")
         return
 
-    owner_id_raw = int(text)
-    owner_tg_id = None if owner_id_raw == 0 else owner_id_raw
-
-    await state.update_data(owner_tg_id=owner_tg_id)
+    await state.update_data(owner_tg_id=owner_tg_id, owner_label=owner_label)
     await state.set_state(AddPromoState.waiting_expiry_date)
     await message.answer(
         "Введите дату окончания промокода.\n"
@@ -242,6 +276,7 @@ async def add_promo_expiry_date(message: Message, state: FSMContext):
         f"Только первая оплата: <b>{'да' if data['first_purchase_only'] else 'нет'}</b>\n"
         f"Лимит на пользователя: <b>{data['max_uses_per_user']}</b>\n"
         f"Персональный: <b>{'да' if owner_tg_id else 'нет'}</b>\n"
+        f"Владелец: <b>{data.get('owner_label', 'общий')}</b>\n"
         f"Действует до: <b>{expires_at.replace(tzinfo=timezone.utc).astimezone(MOSCOW_TZ).date().isoformat()}</b>",
         parse_mode="HTML",
         reply_markup=admin_kb.admin_panel,
