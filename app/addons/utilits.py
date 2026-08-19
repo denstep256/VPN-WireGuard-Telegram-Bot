@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta
 
 from sqlalchemy import select
 
-from app.database.models import Server, Subscribers, async_session
+from app.database.models import Server, Subscribers, TestPeriod, async_session
 from app.paths import config_file_path
 from app.payments.pricing import format_tariff_lines
 from app.settings import wg_max_clients
@@ -16,8 +16,27 @@ logger = logging.getLogger(__name__)
 
 
 def generate_client_name() -> str:
-    # 64 bits of entropy keep collisions negligible even over long-lived installations.
-    return f"ZENITH-{secrets.token_hex(8).upper()}"
+    return f"ZENITH-{secrets.randbelow(1_000_000):06d}"
+
+
+async def generate_unique_client_name(session, max_attempts: int = 100) -> str:
+    for _ in range(max_attempts):
+        client_name = generate_client_name()
+        paid_exists = await session.scalar(
+            select(Subscribers.id)
+            .where(Subscribers.file_name == client_name)
+            .limit(1)
+        )
+        if paid_exists is not None:
+            continue
+        trial_exists = await session.scalar(
+            select(TestPeriod.id)
+            .where(TestPeriod.file_name == client_name)
+            .limit(1)
+        )
+        if trial_exists is None:
+            return client_name
+    raise RuntimeError("Could not generate a unique WireGuard client name")
 
 
 def server_api_url(server: Server) -> str:

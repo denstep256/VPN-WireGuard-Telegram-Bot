@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from app.addons.utilits import (
     calculate_expiry_date,
     check_available_clients_count,
-    generate_client_name,
+    generate_unique_client_name,
     server_api_url,
 )
 from app.database.models import Payments, Server, Subscribers, User, async_session
@@ -407,7 +407,7 @@ async def handle_successful_payment(message: Message):
 
             expiry = calculate_expiry_date(plan)
             expiry_date = expiry.isoformat()
-            client_name = generate_client_name()
+            client_name = await generate_unique_client_name(session)
             session.add(
                 Payments(
                     tg_id=tg_id,

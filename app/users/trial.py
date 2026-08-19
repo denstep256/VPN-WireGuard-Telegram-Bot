@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.addons.utilits import (
     check_available_clients_count,
-    generate_client_name,
+    generate_unique_client_name,
     server_api_url,
 )
 from app.database.models import Server, TestPeriod, async_session
@@ -83,10 +83,10 @@ async def trial_button(call: CallbackQuery):
             await call.answer()
             return
 
-        client_name = generate_client_name()
         expiry_date = (moscow_today() + timedelta(days=3)).isoformat()
         try:
             async with async_session() as session:
+                client_name = await generate_unique_client_name(session)
                 trial = TestPeriod(
                     tg_id=tg_id,
                     username=call.from_user.username or "unknown",

@@ -13,7 +13,7 @@ from app.addons.utilits import (
     add_months,
     delete_file_by_name,
     determine_subscription_type,
-    generate_client_name,
+    generate_unique_client_name,
     parse_date_value,
     server_api_url,
 )
@@ -387,7 +387,7 @@ async def create_new_finish(call: CallbackQuery, state: FSMContext):
 
     expiry_date = add_months(moscow_today(), months).isoformat()
     subscription_type = determine_subscription_type(months)
-    client_name = generate_client_name()
+    client_name = None
     file_path = None
     url = None
     password = None
@@ -403,6 +403,7 @@ async def create_new_finish(call: CallbackQuery, state: FSMContext):
                 await call.message.answer("Сервер не найден или не активен.")
                 return
 
+            client_name = await generate_unique_client_name(session)
             url = server_api_url(server)
             password = server.password
 
