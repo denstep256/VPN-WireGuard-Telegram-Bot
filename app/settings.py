@@ -1,40 +1,10 @@
 from __future__ import annotations
 
-import logging
 from collections.abc import Iterable
 
 import config
 
 from app.paths import CONFIG_DIR, LOGS_DIR
-
-
-logger = logging.getLogger(__name__)
-
-
-def as_bool(value: object, *, default: bool = False) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return value != 0
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on", "да"}:
-            return True
-        if normalized in {"0", "false", "no", "off", "нет"}:
-            return False
-    raise ValueError(f"Некорректное логическое значение: {value!r}")
-
-
-def wg_verify_ssl() -> bool:
-    # XUI_VERIFY_SSL поддерживается для совместимости со старым config.py.
-    raw_value = getattr(
-        config,
-        "WG_VERIFY_SSL",
-        getattr(config, "XUI_VERIFY_SSL", True),
-    )
-    return as_bool(raw_value, default=True)
 
 
 def wg_max_clients() -> int:
@@ -102,20 +72,9 @@ def validate_runtime_config() -> None:
     except (TypeError, ValueError):
         errors.append("WG_REQUEST_TIMEOUT_SECONDS должен быть положительным числом")
 
-    try:
-        wg_verify_ssl()
-    except ValueError as exc:
-        errors.append(str(exc))
-
     if errors:
         formatted = "\n - ".join(errors)
         raise RuntimeError(f"Некорректная конфигурация приложения:\n - {formatted}")
-
-    if not wg_verify_ssl():
-        logger.warning(
-            "WireGuard TLS certificate verification is disabled. "
-            "Use this only for a trusted self-signed endpoint."
-        )
 
 
 def ensure_runtime_directories() -> None:

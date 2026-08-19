@@ -1,15 +1,13 @@
 import importlib
 import pathlib
 import unittest
-from unittest.mock import patch
 
 from app.settings import validate_runtime_config
 
 
 class ImportSmokeTests(unittest.TestCase):
     def test_runtime_config_is_valid(self):
-        with patch("app.settings.wg_verify_ssl", return_value=True):
-            validate_runtime_config()
+        validate_runtime_config()
 
     def test_every_application_module_imports(self):
         root = pathlib.Path(__file__).resolve().parents[1]

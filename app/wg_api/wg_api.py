@@ -11,7 +11,7 @@ from typing import TypeVar
 import aiohttp
 
 from app.paths import CONFIG_DIR, config_file_path
-from app.settings import wg_max_clients, wg_request_timeout_seconds, wg_verify_ssl
+from app.settings import wg_max_clients, wg_request_timeout_seconds
 
 
 logger = logging.getLogger(__name__)
@@ -147,7 +147,7 @@ def validate_client_name(client_name: str) -> str:
 
 
 def _create_wg_session() -> aiohttp.ClientSession:
-    connector = aiohttp.TCPConnector(ssl=wg_verify_ssl())
+    connector = aiohttp.TCPConnector(ssl=False)
     timeout = aiohttp.ClientTimeout(total=wg_request_timeout_seconds())
     cookie_jar = aiohttp.CookieJar(unsafe=True)
     return aiohttp.ClientSession(

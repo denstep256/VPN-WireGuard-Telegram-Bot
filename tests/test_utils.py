@@ -12,7 +12,6 @@ from app.addons.utilits import (
     to_iso_date,
 )
 from app.paths import BASE_DIR, config_file_path, resolve_database_url
-from app.settings import as_bool
 from app.wg_api.wg_api import validate_client_name
 
 
@@ -50,12 +49,6 @@ class UtilityTests(unittest.TestCase):
         self.assertEqual(config_file_path("client.conf").name, "client.conf")
         self.assertEqual(config_file_path("client").name, "client.conf")
         self.assertRegex(generate_client_name(), re.compile(r"^ZENITH-[0-9A-F]{16}$"))
-
-    def test_boolean_config_parser(self):
-        self.assertTrue(as_bool("yes"))
-        self.assertFalse(as_bool("0"))
-        with self.assertRaises(ValueError):
-            as_bool("sometimes")
 
     def test_relative_sqlite_database_is_resolved_from_project_root(self):
         expected = (BASE_DIR / "db.sqlite3").resolve().as_posix()

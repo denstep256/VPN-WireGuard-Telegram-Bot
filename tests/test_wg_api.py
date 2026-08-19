@@ -17,6 +17,13 @@ class WireGuardApiTests(unittest.IsolatedAsyncioTestCase):
             release=MagicMock(),
         )
 
+    async def test_session_disables_tls_certificate_verification(self):
+        session = wg_api._create_wg_session()
+        try:
+            self.assertIs(session.connector._ssl, False)
+        finally:
+            await session.close()
+
     async def test_server_login_uses_v14_session_contract(self):
         session = SimpleNamespace(
             request=AsyncMock(

@@ -10,7 +10,7 @@
    `python -m pip install -r requirements.txt`.
 2. Проверить в `config.py` корректность параметров:
    `TOKEN`, `PAYMENT_TOKEN`, `DB_URL_USERS`, `ADMIN_ID`, `DIR_CONF`,
-   `WG_VERIFY_SSL`, `WG_MAX_CLIENTS`, `WG_REQUEST_TIMEOUT_SECONDS`.
+   `WG_MAX_CLIENTS`, `WG_REQUEST_TIMEOUT_SECONDS`.
 3. Выполнить автоматические проверки:
    `python -m compileall -q main.py app tests`,
    `python -m unittest discover -s tests -v`,

@@ -33,7 +33,7 @@ python -m pip install -r requirements.txt
 cp config.example.py config.py
 ```
 
-Заполните `config.py`. Особое внимание уделите параметру `WG_VERIFY_SSL`: в продакшене он должен оставаться `True`. Значение `False` допустимо только для доверенного сервера с self-signed сертификатом.
+Заполните `config.py`. Проверка TLS-сертификата WireGuard Easy отключена в коде, поскольку целевой сервер использует self-signed сертификат. Не публикуйте административный API WireGuard Easy в открытый интернет: ограничьте доступ firewall/VPN или доверенной внутренней сетью.
 
 Запуск:
 

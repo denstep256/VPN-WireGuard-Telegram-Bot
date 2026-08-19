@@ -11,9 +11,8 @@ DIR_CONF = "app/auth"
 # A Telegram invoice must not become cheaper than this after bonuses.
 MIN_PAY_RUB = 50
 
-# WireGuard Easy integration. Keep TLS verification enabled in production.
-# Set False only for a trusted server with a self-signed certificate.
-WG_VERIFY_SSL = True
+# WireGuard Easy integration. TLS certificate verification is disabled because
+# the target installation uses a self-signed certificate.
 WG_MAX_CLIENTS = 60
 WG_REQUEST_TIMEOUT_SECONDS = 15
 
