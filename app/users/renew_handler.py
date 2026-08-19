@@ -1,17 +1,15 @@
-import os
-
 from aiogram import Router, F
-from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, FSInputFile, \
-    BufferedInputFile
+from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, FSInputFile
 from sqlalchemy import select
 
 import app.users.keyboard as kb
 from app.addons.button_text import BUTTON_TEXTS
 from app.addons.utilits import build_tariff_caption, format_tariff
 from app.database.models import async_session, Subscribers, TestPeriod, Server
+from app.paths import config_file_path
 from app.payments.pricing import get_active_discount_percent
 from app.users.handlers import texts_for_bot
-from config import DIR_CONF
+from app.wg_api.wg_api import validate_client_name
 
 user_renew_router = Router()
 
@@ -101,14 +99,17 @@ async def handle_subscribe_click(call: CallbackQuery):
     if not filename.endswith(".conf"):
         filename += ".conf"
 
-    conf_path = os.path.join(DIR_CONF, filename)
+    try:
+        conf_path = config_file_path(validate_client_name(sub.file_name))
+    except ValueError:
+        conf_path = None
 
-    if os.path.exists(conf_path):
+    if conf_path and conf_path.is_file():
         await call.message.answer_document(FSInputFile(conf_path))
     else:
         await call.message.answer(
-            f"⚠️ Конфигурация не найдена: <code>{filename}</code>\n"
-            f"Путь: <code>{conf_path}</code>",
+            f"⚠️ Конфигурация <code>{filename}</code> сейчас недоступна. "
+            "Напишите в поддержку.",
             parse_mode="HTML"
         )
 
@@ -139,7 +140,7 @@ async def handle_renew_open(call: CallbackQuery):
             select(Server).where(
                 Server.region == sub.server_region,
                 Server.region_id == sub.server_region_id,
-                Server.is_active == True
+                Server.is_active.is_(True)
             )
         )
         server = res_srv.scalar_one_or_none()
@@ -158,16 +159,16 @@ async def handle_renew_open(call: CallbackQuery):
         renew_file_name=sub.file_name,
     )
 
-    # ВАЖНО: клавиатура покупки теперь должна содержать sub_id
     buy_kb = kb.get_renew_buy_kb(sub_id=sub_id)
 
-    with open("app/Pictures/WireGuard_ logo.jpeg", "rb") as photo_file:
-        photo_bytes = photo_file.read()
-
-    await call.message.answer_photo(
-        photo=BufferedInputFile(photo_bytes, filename="wireguard.jpg"),
-        caption=caption_text,
+    await call.message.answer(
+        text=caption_text,
         parse_mode="HTML",
         reply_markup=buy_kb
     )
     await call.answer()
+
+
+@user_renew_router.callback_query(F.data == "cancel")
+async def cancel_subscription_selection(call: CallbackQuery):
+    await call.answer("Действие отменено.")

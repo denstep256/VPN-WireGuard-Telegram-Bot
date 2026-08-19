@@ -1,5 +1,5 @@
 import logging
-from datetime import date, timedelta
+from datetime import timedelta
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -9,20 +9,21 @@ from sqlalchemy import select, update
 from app.addons.utilits import parse_date_value
 from app.database.models import Subscribers, async_session
 from app.planners.scheduler_runtime import get_scheduler
+from app.time_utils import moscow_today
 
 
 logger = logging.getLogger(__name__)
 
 
 async def check_subscriptions(bot: Bot):
-    tomorrow = date.today() + timedelta(days=1)
+    tomorrow = moscow_today() + timedelta(days=1)
     processed = 0
     sent = 0
     failed = 0
 
     async with async_session() as session:
         result = await session.execute(
-            select(Subscribers).where(Subscribers.notif_oneday == False)  # noqa: E712
+            select(Subscribers).where(Subscribers.notif_oneday.is_(False))
         )
         subscriptions = result.scalars().all()
 
@@ -86,7 +87,7 @@ def setup_scheduler_subs_notif_oneday(bot: Bot):
     scheduler = get_scheduler()
     scheduler.add_job(
         check_subscriptions,
-        trigger=CronTrigger(hour=18, minute=57),
+        trigger=CronTrigger(hour=10, minute=0),
         id="check_subscriptions_oneday",
         kwargs={"bot": bot},
         replace_existing=True,

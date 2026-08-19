@@ -3,6 +3,7 @@ import asyncio
 import logging
 
 from app.addons.logging_setup import setup_logging
+from app.settings import ensure_runtime_directories, validate_runtime_config
 from app.admin.admin_commands_add_server import admin_command_add_server_router
 from app.admin.admin_commands_add_promocode import admin_add_promo_router
 from app.admin.admin_commands_pinger import admin_pinger_router
@@ -27,15 +28,17 @@ from app.planners.subscribers.notif_end_day_subs import setup_scheduler_subs_not
 from app.planners.subscribers.notof_oneday_subs import setup_scheduler_subs_notif_oneday
 from app.planners.trial_planner.notif_end_day import setup_scheduler_trial_notif_end_day
 from app.planners.trial_planner.notif_oneday import setup_scheduler_trial_notif_oneday
+from app.planners.scheduler_runtime import shutdown_scheduler
 
 logger = logging.getLogger(__name__)
 
 
 
 async def main():
+    ensure_runtime_directories()
     setup_logging()
+    validate_runtime_config()
     await async_main()
-    #Включение бота
     bot = Bot(token=config.TOKEN)
     dp = Dispatcher()
 
@@ -62,7 +65,11 @@ async def main():
     dp.include_router(admin_subs_router)
     dp.include_router(admin_pinger_router)
 
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    finally:
+        shutdown_scheduler()
+        await bot.session.close()
 
 if __name__ == '__main__':
     try:

@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import timedelta
 
 from aiogram import Bot
 from apscheduler.triggers.cron import CronTrigger
@@ -8,13 +8,14 @@ import logging
 from app.addons.utilits import parse_date_value
 from app.database.models import TestPeriod, async_session
 from app.planners.scheduler_runtime import get_scheduler
+from app.time_utils import moscow_today
 
 
 logger = logging.getLogger(__name__)
 
 
 async def check_subscriptions_trial(bot: Bot):
-    tomorrow = date.today() + timedelta(days=1)
+    tomorrow = moscow_today() + timedelta(days=1)
     processed = 0
     sent = 0
     failed = 0
@@ -23,7 +24,7 @@ async def check_subscriptions_trial(bot: Bot):
         result = await session.execute(
             select(TestPeriod).where(
                 TestPeriod.subscription == "trial",
-                TestPeriod.notif_oneday == False,  # noqa: E712
+                TestPeriod.notif_oneday.is_(False),
             )
         )
         trials = result.scalars().all()
@@ -71,7 +72,7 @@ def setup_scheduler_trial_notif_oneday(bot: Bot):
     scheduler = get_scheduler()
     scheduler.add_job(
         check_subscriptions_trial,
-        trigger=CronTrigger(hour=18, minute=57),
+        trigger=CronTrigger(hour=10, minute=15),
         id="check_subscriptions_trial_oneday",
         kwargs={"bot": bot},
         replace_existing=True,

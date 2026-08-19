@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from aiogram import F, Router
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
@@ -9,6 +7,7 @@ import app.users.keyboard as kb
 
 from app.addons.button_text import BUTTON_TEXTS
 from app.database.models import async_session, PromoCode, PromoRedemption, Payments
+from app.time_utils import utc_now_naive
 
 promocode_router = Router()
 
@@ -34,7 +33,7 @@ async def promo_entered(message: Message, state: FSMContext):
             await state.clear()
             return
 
-        if not promo.expires_at or promo.expires_at <= datetime.utcnow():
+        if not promo.expires_at or promo.expires_at <= utc_now_naive():
             promo.is_active = False
             await session.commit()
             await message.answer(

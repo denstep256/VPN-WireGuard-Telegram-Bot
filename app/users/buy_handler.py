@@ -1,6 +1,5 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, FSInputFile, \
-    InputMediaPhoto
+from aiogram.types import Message, CallbackQuery
 from sqlalchemy import select
 
 import app.users.keyboard as kb
@@ -22,10 +21,10 @@ async def help_main_button(message: Message):
             parse_mode="HTML"
         )
 
-@user_buy_router.callback_query(F.data.contains("srv|"))
+@user_buy_router.callback_query(F.data.startswith("srv|"))
 async def handle_server_selection(callback: CallbackQuery):
     parts = callback.data.split("|")
-    if len(parts) < 3:
+    if len(parts) != 3:
         await callback.answer("❌ Некорректный формат выбора сервера.", show_alert=True)
         return
 
@@ -41,7 +40,7 @@ async def handle_server_selection(callback: CallbackQuery):
             select(Server).where(
                 Server.region == region,
                 Server.region_id == region_id,
-                Server.is_active == True
+                Server.is_active.is_(True)
             )
         )
         server = result.scalar_one_or_none()
@@ -58,15 +57,15 @@ async def handle_server_selection(callback: CallbackQuery):
         discount_percent=discount_percent,
     )
 
-    photo = FSInputFile("app/Pictures/WireGuard_ logo.jpeg")
-    await callback.message.edit_media(
-        media=InputMediaPhoto(media=photo),
-        reply_markup=kb.get_buy_kb(server.region, server.region_id)
-    )
-    await callback.message.edit_caption(
-        caption=caption_text,
+    await callback.message.edit_text(
+        text=caption_text,
         parse_mode="HTML",
         reply_markup=kb.get_buy_kb(server.region, server.region_id)
     )
 
     await callback.answer()
+
+
+@user_buy_router.callback_query(F.data == "no_servers")
+async def handle_no_servers(callback: CallbackQuery):
+    await callback.answer("Сейчас нет доступных серверов.", show_alert=True)

@@ -1,14 +1,13 @@
-from datetime import date
-
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from apscheduler.triggers.cron import CronTrigger
-from sqlalchemy import select, update
+from sqlalchemy import select
 import logging
 
-from app.addons.utilits import delete_file_by_name, parse_date_value
+from app.addons.utilits import delete_file_by_name, parse_date_value, server_api_url
 from app.database.models import Server, Subscribers, async_session
 from app.planners.scheduler_runtime import get_scheduler
+from app.time_utils import moscow_today
 from app.wg_api.wg_api import remove_client_wg
 
 
@@ -16,8 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 async def check_subscriptions_subs(bot: Bot):
-    today = date.today()
-    marker = f"expired_notified:{today.isoformat()}"
+    today = moscow_today()
     processed = 0
     notified = 0
     failed_notify = 0
@@ -29,15 +27,18 @@ async def check_subscriptions_subs(bot: Bot):
 
         for subscription in subscriptions:
             expiry = parse_date_value(subscription.expiry_date)
-            if expiry != today:
+            if expiry is None or expiry > today:
                 continue
-            if subscription.note == marker:
+            notified_marker = f"expired_notified:{expiry.isoformat()}"
+            cleaned_marker = f"expired_cleaned:{expiry.isoformat()}"
+            if subscription.note == cleaned_marker:
                 continue
             processed += 1
 
             message = (
-                "⚠️ <b>Срок подписки истёк сегодня</b>\n\n"
+                "⚠️ <b>Срок подписки истёк</b>\n\n"
                 f"Сервер: <b>{subscription.server_region} №{subscription.server_region_id}</b>\n"
+                f"Дата окончания: <b>{expiry.isoformat()}</b>\n"
                 "Чтобы вернуть доступ, продлите подписку одним нажатием."
             )
             renew_kb = InlineKeyboardMarkup(
@@ -51,25 +52,29 @@ async def check_subscriptions_subs(bot: Bot):
                 ]
             )
 
-            try:
-                await bot.send_message(
-                    chat_id=subscription.tg_id,
-                    text=message,
-                    parse_mode="HTML",
-                    reply_markup=renew_kb,
-                )
-                notified += 1
-            except Exception:
-                failed_notify += 1
-                logger.exception(
-                    "Failed to send end-day subscription notification: sub_id=%s tg_id=%s",
-                    subscription.id,
-                    subscription.tg_id,
-                )
+            if subscription.note != notified_marker:
+                try:
+                    await bot.send_message(
+                        chat_id=subscription.tg_id,
+                        text=message,
+                        parse_mode="HTML",
+                        reply_markup=renew_kb,
+                    )
+                    subscription.note = notified_marker
+                    notified += 1
+                except Exception:
+                    failed_notify += 1
+                    logger.exception(
+                        "Failed to send end-day subscription notification: sub_id=%s tg_id=%s",
+                        subscription.id,
+                        subscription.tg_id,
+                    )
 
+            local_cleaned = True
             try:
                 delete_file_by_name(subscription.file_name)
             except Exception:
+                local_cleaned = False
                 logger.exception(
                     "Failed to delete local file for expired subscription: sub_id=%s file_name=%s",
                     subscription.id,
@@ -84,13 +89,15 @@ async def check_subscriptions_subs(bot: Bot):
             )
             server = server_result.scalar_one_or_none()
 
+            remote_cleaned = False
             if server:
                 try:
                     await remove_client_wg(
                         subscription.file_name,
-                        f"https://{server.host_ip}:{server.port}",
+                        server_api_url(server),
                         server.password,
                     )
+                    remote_cleaned = True
                 except Exception:
                     failed_remove_remote += 1
                     logger.exception(
@@ -100,12 +107,21 @@ async def check_subscriptions_subs(bot: Bot):
                         subscription.server_region,
                         subscription.server_region_id,
                     )
+            else:
+                failed_remove_remote += 1
+                logger.error(
+                    "Server not found for expired subscription cleanup: sub_id=%s region=%s region_id=%s",
+                    subscription.id,
+                    subscription.server_region,
+                    subscription.server_region_id,
+                )
 
-            await session.execute(
-                update(Subscribers)
-                .where(Subscribers.id == subscription.id)
-                .values(note=marker)
-            )
+            if (
+                remote_cleaned
+                and local_cleaned
+                and subscription.note == notified_marker
+            ):
+                subscription.note = cleaned_marker
 
         await session.commit()
     logger.info(
@@ -122,10 +138,9 @@ def setup_scheduler_subs_notif_end_day(bot: Bot):
     scheduler = get_scheduler()
     scheduler.add_job(
         check_subscriptions_subs,
-        trigger=CronTrigger(hour=18, minute=57),
-        #trigger=CronTrigger(hour=14, minute=10),
+        trigger=CronTrigger(hour=23, minute=45),
         id="check_subscriptions_subs_endday",
         kwargs={"bot": bot},
         replace_existing=True,
     )
-    logger.info("Scheduler job registered: check_subscriptions_subs_endday (11:00 Europe/Moscow)")
+    logger.info("Scheduler job registered: check_subscriptions_subs_endday (23:45 Europe/Moscow)")

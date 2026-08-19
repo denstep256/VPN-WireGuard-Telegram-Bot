@@ -28,3 +28,12 @@ def get_scheduler() -> AsyncIOScheduler:
         _logger.info("Scheduler started.")
 
     return _scheduler
+
+
+def shutdown_scheduler() -> None:
+    global _scheduler
+
+    if _scheduler is not None and _scheduler.running:
+        _scheduler.shutdown(wait=False)
+        _logger.info("Scheduler stopped.")
+    _scheduler = None

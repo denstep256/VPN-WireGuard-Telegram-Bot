@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 import config
 from sqlalchemy import func, select
 
@@ -15,6 +13,7 @@ from config import (
 )
 
 from app.database.models import Payments, PromoCode, PromoRedemption, User
+from app.time_utils import utc_now_naive
 
 
 MIN_PAY_RUB = int(getattr(config, "MIN_PAY_RUB", 50))
@@ -70,12 +69,19 @@ PLAN_FAKE_PRICES = {
 }
 
 PLAN_ORDER = ("monthly_subs", "semi_annual_subs", "annual_subs")
+MAX_DISCOUNT_PERCENT = 90
 
 
 def apply_discount(price_rub: int, discount_percent: int) -> int:
-    if discount_percent <= 0:
-        return int(price_rub)
-    return int(round(int(price_rub) * (100 - int(discount_percent)) / 100))
+    price = int(price_rub)
+    discount = int(discount_percent)
+    if price < 0:
+        raise ValueError("Price cannot be negative")
+    if not 0 <= discount <= MAX_DISCOUNT_PERCENT:
+        raise ValueError(f"Discount must be between 0 and {MAX_DISCOUNT_PERCENT}")
+    if discount == 0:
+        return price
+    return int(round(price * (100 - discount) / 100))
 
 
 def calc_bonus_to_use(price_after_discount: int, user_bonus_balance: int) -> int:
@@ -85,7 +91,22 @@ def calc_bonus_to_use(price_after_discount: int, user_bonus_balance: int) -> int
     return max(0, min(int(user_bonus_balance or 0), max_bonus_allowed))
 
 
+def calculate_invoice_price(plan: str, discount: int, bonus_used: int) -> int:
+    discounted_price = apply_discount(get_base_price(plan), discount)
+    max_bonus = calc_bonus_to_use(discounted_price, bonus_used)
+    if int(bonus_used) != max_bonus:
+        raise ValueError("Invalid bonus amount in payment payload")
+    return discounted_price - max_bonus
+
+
 def build_buy_payload(base_plan: str, region: str, region_id: int, discount: int, bonus_used: int) -> str:
+    if base_plan not in PLAN_TO_MONTHS:
+        raise ValueError(f"Unknown plan: {base_plan}")
+    if not region or "|" in region:
+        raise ValueError("Invalid region")
+    if int(region_id) <= 0:
+        raise ValueError("Invalid region id")
+    calculate_invoice_price(base_plan, int(discount), int(bonus_used))
     return f"{base_plan}|{region}|{region_id}|d{discount}|b{bonus_used}"
 
 
@@ -96,9 +117,11 @@ def parse_buy_payload(payload: str) -> tuple[str, str, int, int, int]:
 
     base_plan = parts[0]
     region = parts[1]
-    if not parts[2].isdigit():
+    if base_plan not in PLAN_TO_MONTHS or not region or not parts[2].isdigit():
         raise ValueError("Invalid region id")
     region_id = int(parts[2])
+    if region_id <= 0:
+        raise ValueError("Invalid region id")
 
     discount = 0
     bonus_used = 0
@@ -107,11 +130,17 @@ def parse_buy_payload(payload: str) -> tuple[str, str, int, int, int]:
             discount = int(part[1:])
         elif part.startswith("b") and part[1:].isdigit():
             bonus_used = int(part[1:])
+        else:
+            raise ValueError("Invalid payload option")
 
+    calculate_invoice_price(base_plan, discount, bonus_used)
     return base_plan, region, region_id, discount, bonus_used
 
 
 def build_renew_payload(plan: str, sub_id: int, discount: int, bonus_used: int) -> str:
+    if plan not in PLAN_TO_MONTHS or int(sub_id) <= 0:
+        raise ValueError("Invalid renewal payload")
+    calculate_invoice_price(plan, int(discount), int(bonus_used))
     return f"renew|{plan}|{sub_id}|d{discount}|b{bonus_used}"
 
 
@@ -121,9 +150,13 @@ def parse_renew_payload(payload: str) -> tuple[str, int, int, int]:
         raise ValueError("Invalid renew payload")
 
     plan = parts[1]
+    if plan not in PLAN_TO_MONTHS:
+        raise ValueError("Invalid renewal plan")
     if not parts[2].isdigit():
         raise ValueError("Invalid subscription id")
     sub_id = int(parts[2])
+    if sub_id <= 0:
+        raise ValueError("Invalid subscription id")
 
     discount = 0
     bonus_used = 0
@@ -132,7 +165,10 @@ def parse_renew_payload(payload: str) -> tuple[str, int, int, int]:
             discount = int(part[1:])
         elif part.startswith("b") and part[1:].isdigit():
             bonus_used = int(part[1:])
+        else:
+            raise ValueError("Invalid renewal payload option")
 
+    calculate_invoice_price(plan, discount, bonus_used)
     return plan, sub_id, discount, bonus_used
 
 
@@ -185,28 +221,26 @@ async def get_active_discount_percent(session, tg_id: int) -> int:
         .join(PromoCode, PromoCode.id == PromoRedemption.promo_id)
         .where(
             PromoRedemption.user_tg_id == tg_id,
-            PromoRedemption.is_activated == True,  # noqa: E712
-            PromoCode.is_active == True,  # noqa: E712
-            PromoCode.expires_at > datetime.utcnow(),
+            PromoRedemption.is_activated.is_(True),
+            PromoCode.is_active.is_(True),
+            PromoCode.expires_at > utc_now_naive(),
         )
         .order_by(PromoRedemption.id.desc())
-        .limit(1)
     )
 
-    row = (await session.execute(q)).first()
-    if not row:
-        return 0
-
-    redemption, promo = row
-
-    if redemption.uses_count >= int(promo.max_uses_per_user or 0):
-        return 0
-
-    if promo.first_purchase_only:
-        if await get_user_payments_count(session, tg_id) > 0:
-            return 0
-
-    return int(promo.discount_percent or 0)
+    has_payments: bool | None = None
+    for redemption, promo in (await session.execute(q)).all():
+        if redemption.uses_count >= int(promo.max_uses_per_user or 0):
+            continue
+        if promo.first_purchase_only:
+            if has_payments is None:
+                has_payments = await get_user_payments_count(session, tg_id) > 0
+            if has_payments:
+                continue
+        discount = int(promo.discount_percent or 0)
+        if 0 < discount <= MAX_DISCOUNT_PERCENT:
+            return discount
+    return 0
 
 
 async def mark_promo_used_if_applicable(session, tg_id: int, is_first_payment: bool) -> None:
@@ -215,27 +249,23 @@ async def mark_promo_used_if_applicable(session, tg_id: int, is_first_payment: b
         .join(PromoCode, PromoCode.id == PromoRedemption.promo_id)
         .where(
             PromoRedemption.user_tg_id == tg_id,
-            PromoRedemption.is_activated == True,  # noqa: E712
-            PromoCode.is_active == True,  # noqa: E712
-            PromoCode.expires_at > datetime.utcnow(),
+            PromoRedemption.is_activated.is_(True),
+            PromoCode.is_active.is_(True),
+            PromoCode.expires_at > utc_now_naive(),
         )
         .order_by(PromoRedemption.id.desc())
-        .limit(1)
     )
-    row = (await session.execute(q)).first()
-    if not row:
+    for redemption, promo in (await session.execute(q)).all():
+        if redemption.uses_count >= int(promo.max_uses_per_user or 0):
+            continue
+        if promo.first_purchase_only and not is_first_payment:
+            continue
+        redemption.uses_count += 1
+        redemption.is_activated = (
+            redemption.uses_count < int(promo.max_uses_per_user or 0)
+        )
+        redemption.last_used_at = utc_now_naive()
         return
-
-    redemption, promo = row
-
-    if redemption.uses_count >= int(promo.max_uses_per_user or 0):
-        return
-    if promo.first_purchase_only and not is_first_payment:
-        return
-
-    redemption.uses_count += 1
-    redemption.is_activated = False
-    redemption.last_used_at = datetime.utcnow()
 
 
 async def get_user_bonus_balance(session, tg_id: int) -> int:

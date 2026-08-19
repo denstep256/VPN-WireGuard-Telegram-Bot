@@ -271,15 +271,10 @@ def migrate_subscribers(
 
 def migrate_test_period(old_conn: sqlite3.Connection, new_conn: sqlite3.Connection) -> TableStats:
     stats = TableStats()
-    existing_keys = {
-        (
-            row[0],
-            normalize_text(row[1]),
-            normalize_text(row[2]),
-            normalize_text(row[3]),
-        )
+    existing_tg_ids = {
+        row[0]
         for row in new_conn.execute(
-            "SELECT tg_id, file_name, subscription, expiry_date FROM test_period"
+            "SELECT tg_id FROM test_period WHERE tg_id IS NOT NULL"
         ).fetchall()
     }
     rows = old_conn.execute(
@@ -290,13 +285,7 @@ def migrate_test_period(old_conn: sqlite3.Connection, new_conn: sqlite3.Connecti
         if tg_id is None:
             stats.skipped_invalid += 1
             continue
-        key = (
-            tg_id,
-            normalize_text(file_name),
-            normalize_text(subscription),
-            normalize_text(expiry_date),
-        )
-        if key in existing_keys:
+        if tg_id in existing_tg_ids:
             stats.skipped_duplicates += 1
             continue
 
@@ -316,7 +305,7 @@ def migrate_test_period(old_conn: sqlite3.Connection, new_conn: sqlite3.Connecti
                 1 if bool(notif_oneday) else 0,
             ),
         )
-        existing_keys.add(key)
+        existing_tg_ids.add(tg_id)
         stats.inserted += 1
 
     return stats

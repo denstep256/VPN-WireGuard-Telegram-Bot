@@ -39,6 +39,10 @@ async def choose_broadcast_type(message: Message, state: FSMContext):
 
 @admin_command_router.message(BroadcastState.choosing_type)
 async def handle_broadcast_choice(message: Message, state: FSMContext):
+    if message.from_user.id != int(ADMIN_ID):
+        await state.clear()
+        await message.answer("У вас нет доступа")
+        return
     if message.text == 'С фото':
         await message.answer(f'Пожалуйста, отправьте фото для рассылки:{CANCEL_HINT}')
         await state.set_state(BroadcastState.waiting_for_photo)
@@ -50,6 +54,10 @@ async def handle_broadcast_choice(message: Message, state: FSMContext):
 
 @admin_command_router.message(BroadcastState.waiting_for_photo)
 async def receive_photo(message: Message, state: FSMContext):
+    if message.from_user.id != int(ADMIN_ID):
+        await state.clear()
+        await message.answer("У вас нет доступа")
+        return
     if message.photo:
         await state.update_data(photo=message.photo[-1].file_id)  # Сохраняем самое высокое качество
         await message.answer(f'{texts_for_bot["admin_commands_sender"]}{CANCEL_HINT}')
@@ -61,7 +69,10 @@ async def receive_photo(message: Message, state: FSMContext):
 @admin_command_router.message(BroadcastState.waiting_for_text)
 async def prepare_broadcast_message(message: Message, state: FSMContext):
     if message.from_user.id == int(ADMIN_ID):
-        broadcast_text = message.text
+        broadcast_text = message.text or ""
+        if not broadcast_text.strip():
+            await message.answer("Текст рассылки не может быть пустым.")
+            return
         data = await state.get_data()
         photo_id = data.get('photo')
 
@@ -85,12 +96,20 @@ async def prepare_broadcast_message(message: Message, state: FSMContext):
     else:
         await message.answer('У вас нет доступа')
 
-@admin_command_router.callback_query(F.data == "confirm_broadcast")
+@admin_command_router.callback_query(BroadcastState.confirmation, F.data == "confirm_broadcast")
 async def start_broadcast(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    if callback.from_user.id != int(ADMIN_ID):
+        await callback.answer("У вас нет доступа", show_alert=True)
+        await state.clear()
+        return
     await callback.answer()  # Убедитесь, что вы отвечаете на колбек
     data = await state.get_data()
     photo_id = data.get('photo')
     broadcast_text = data.get('text')  # Получаем текст из состояния
+    if not isinstance(broadcast_text, str) or not broadcast_text.strip():
+        await callback.message.answer("Данные рассылки потеряны. Начните заново.", reply_markup=kb.admin_panel)
+        await state.clear()
+        return
 
     async with async_session() as session:
         result = await session.execute(select(User.tg_id))
@@ -126,8 +145,12 @@ async def start_broadcast(callback: CallbackQuery, state: FSMContext, bot: Bot):
     await callback.message.answer(f'Рассылка завершена. Успешных отправок: {successful_sends}, неудачных: {failed_sends}', reply_markup=kb.admin_panel)
     await state.clear()
 
-@admin_command_router.callback_query(F.data == 'cancel_broadcast')
+@admin_command_router.callback_query(BroadcastState.confirmation, F.data == 'cancel_broadcast')
 async def cancel_broadcast(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id != int(ADMIN_ID):
+        await callback.answer("У вас нет доступа", show_alert=True)
+        await state.clear()
+        return
     logger.info("Админ %s отменил рассылку.", _admin_actor(callback.from_user))
     await callback.message.answer("Рассылка отменена.", reply_markup=kb.admin_panel)
     await state.clear()

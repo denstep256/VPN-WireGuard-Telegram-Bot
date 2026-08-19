@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import os
 import tempfile
@@ -17,9 +16,11 @@ from openpyxl.utils import get_column_letter
 
 import app.admin.admin_keyboard as kb
 from app.users.keyboard import get_main_keyboard
+from app.addons.utilits import server_api_url
 from app.wg_api.wg_api import get_client_count_wg
 from config import ADMIN_ID
 from app.database.models import async_session, TestPeriod, User, Subscribers, Payments, Server
+from app.time_utils import moscow_today
 
 admin_router = Router()
 logger = logging.getLogger(__name__)
@@ -143,7 +144,7 @@ async def clients_on_servers_wg(message: Message):
     async with async_session() as session:
         res = await session.execute(
             select(Server)
-            .where(Server.is_active == True)
+            .where(Server.is_active.is_(True))
             .order_by(Server.region, Server.region_id)
         )
         servers = res.scalars().all()
@@ -156,7 +157,7 @@ async def clients_on_servers_wg(message: Message):
     lines = ["📊 <b>Клиенты WireGuard по серверам</b>\n"]
 
     for s in servers:
-        url = f"https://{s.host_ip}:{s.port}"
+        url = server_api_url(s)
 
         try:
             count = await get_client_count_wg(url, s.password)
@@ -241,7 +242,7 @@ async def subscribers_excel(message: Message):
         )
         rows = res.all()
 
-    today = datetime.now().date()
+    today = moscow_today()
     total = len(rows)
 
     active = 0
@@ -315,11 +316,13 @@ async def testperiod_excel(message: Message):
                 TestPeriod.subscription,
                 TestPeriod.expiry_date,
                 TestPeriod.notif_oneday,
+                TestPeriod.server_region,
+                TestPeriod.server_region_id,
             ).order_by(TestPeriod.id)
         )
         rows = res.all()
 
-    today = datetime.now().date()
+    today = moscow_today()
     total = len(rows)
 
     active = 0
@@ -350,7 +353,17 @@ async def testperiod_excel(message: Message):
         message=message,
         filename="test_period.xlsx",
         sheet_name="test_period",
-        headers=["id", "tg_id", "username", "file_name", "subscription", "expiry_date", "notif_oneday"],
+        headers=[
+            "id",
+            "tg_id",
+            "username",
+            "file_name",
+            "subscription",
+            "expiry_date",
+            "notif_oneday",
+            "server_region",
+            "server_region_id",
+        ],
         rows=rows,
     )
     logger.info(

@@ -1,21 +1,25 @@
 import logging
+import re
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 from sqlalchemy import select
-from datetime import datetime, time
+from datetime import datetime, time, timezone
+from zoneinfo import ZoneInfo
 
 import app.admin.admin_keyboard as admin_kb
 from app.addons.button_text import BUTTON_TEXTS
 from app.admin.admin_keyboard import cancel_kb
 from app.database.models import PromoCode, async_session
+from app.time_utils import utc_now_naive
 from config import ADMIN_ID
 
 
 admin_add_promo_router = Router()
 logger = logging.getLogger(__name__)
 CANCEL_HINT = f"\nДля отмены отправьте: {BUTTON_TEXTS['cancel']}"
+MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 
 
 class AddPromoState(StatesGroup):
@@ -36,7 +40,12 @@ def _parse_expiry_input(raw_text: str | None) -> datetime | None:
     for fmt in ("%d.%m.%Y", "%Y-%m-%d"):
         try:
             parsed_date = datetime.strptime(text, fmt).date()
-            return datetime.combine(parsed_date, time(hour=23, minute=59, second=59))
+            local_expiry = datetime.combine(
+                parsed_date,
+                time(hour=23, minute=59, second=59),
+                tzinfo=MOSCOW_TZ,
+            )
+            return local_expiry.astimezone(timezone.utc).replace(tzinfo=None)
         except ValueError:
             continue
     return None
@@ -45,6 +54,14 @@ def _parse_expiry_input(raw_text: str | None) -> datetime | None:
 def _admin_actor(user) -> str:
     username = user.username or "-"
     return f"{user.id} (@{username})"
+
+
+async def _reject_non_admin(message: Message, state: FSMContext) -> bool:
+    if _is_admin(message.from_user.id):
+        return False
+    await state.clear()
+    await message.answer("У вас нет доступа")
+    return True
 
 
 @admin_add_promo_router.message(F.text == BUTTON_TEXTS["add_promocode"])
@@ -66,13 +83,11 @@ async def start_add_promo(message: Message, state: FSMContext):
 
 @admin_add_promo_router.message(AddPromoState.waiting_code)
 async def add_promo_code(message: Message, state: FSMContext):
-    if not _is_admin(message.from_user.id):
-        await state.clear()
-        await message.answer("У вас нет доступа")
+    if await _reject_non_admin(message, state):
         return
 
     code = (message.text or "").strip().upper()
-    if not code or len(code) > 32 or not all(ch.isalnum() or ch in "-_" for ch in code):
+    if not re.fullmatch(r"[A-Z0-9_-]{1,32}", code):
         await message.answer("❌ Некорректный код. Разрешены A-Z, 0-9, '-', '_' и длина до 32.")
         return
 
@@ -89,6 +104,8 @@ async def add_promo_code(message: Message, state: FSMContext):
 
 @admin_add_promo_router.message(AddPromoState.waiting_discount)
 async def add_promo_discount(message: Message, state: FSMContext):
+    if await _reject_non_admin(message, state):
+        return
     text = (message.text or "").strip()
     if not text.isdigit():
         await message.answer("❌ Укажите целое число от 1 до 90.")
@@ -106,6 +123,8 @@ async def add_promo_discount(message: Message, state: FSMContext):
 
 @admin_add_promo_router.message(AddPromoState.waiting_first_purchase_only)
 async def add_promo_first_purchase_only(message: Message, state: FSMContext):
+    if await _reject_non_admin(message, state):
+        return
     answer = (message.text or "").strip().lower()
     if answer not in {"да", "нет"}:
         await message.answer("❌ Ответьте: да или нет.")
@@ -118,6 +137,8 @@ async def add_promo_first_purchase_only(message: Message, state: FSMContext):
 
 @admin_add_promo_router.message(AddPromoState.waiting_max_uses)
 async def add_promo_max_uses(message: Message, state: FSMContext):
+    if await _reject_non_admin(message, state):
+        return
     text = (message.text or "").strip()
     if not text.isdigit():
         await message.answer("❌ Укажите целое число от 1 до 20.")
@@ -140,6 +161,8 @@ async def add_promo_max_uses(message: Message, state: FSMContext):
 
 @admin_add_promo_router.message(AddPromoState.waiting_owner)
 async def add_promo_owner(message: Message, state: FSMContext):
+    if await _reject_non_admin(message, state):
+        return
     text = (message.text or "").strip()
     if not text.isdigit():
         await message.answer("❌ Введите число (TG ID) или 0.")
@@ -161,9 +184,7 @@ async def add_promo_owner(message: Message, state: FSMContext):
 
 @admin_add_promo_router.message(AddPromoState.waiting_expiry_date)
 async def add_promo_expiry_date(message: Message, state: FSMContext):
-    if not _is_admin(message.from_user.id):
-        await state.clear()
-        await message.answer("У вас нет доступа")
+    if await _reject_non_admin(message, state):
         return
 
     expires_at = _parse_expiry_input(message.text)
@@ -174,7 +195,7 @@ async def add_promo_expiry_date(message: Message, state: FSMContext):
         )
         return
 
-    if expires_at <= datetime.utcnow():
+    if expires_at <= utc_now_naive():
         await message.answer("❌ Дата окончания должна быть позже текущего момента.")
         return
 
@@ -221,7 +242,7 @@ async def add_promo_expiry_date(message: Message, state: FSMContext):
         f"Только первая оплата: <b>{'да' if data['first_purchase_only'] else 'нет'}</b>\n"
         f"Лимит на пользователя: <b>{data['max_uses_per_user']}</b>\n"
         f"Персональный: <b>{'да' if owner_tg_id else 'нет'}</b>\n"
-        f"Действует до: <b>{expires_at.date().isoformat()}</b>",
+        f"Действует до: <b>{expires_at.replace(tzinfo=timezone.utc).astimezone(MOSCOW_TZ).date().isoformat()}</b>",
         parse_mode="HTML",
         reply_markup=admin_kb.admin_panel,
     )

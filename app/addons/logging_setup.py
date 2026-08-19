@@ -2,6 +2,8 @@ import logging
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
+from app.paths import LOGS_DIR
+
 
 class _PrefixFilter(logging.Filter):
     def __init__(self, *prefixes: str):
@@ -38,8 +40,8 @@ def _build_file_handler(
 
 
 def setup_logging() -> None:
-    logs_dir = Path("logs")
-    logs_dir.mkdir(exist_ok=True)
+    logs_dir = LOGS_DIR
+    logs_dir.mkdir(parents=True, exist_ok=True)
 
     root_logger = logging.getLogger()
 

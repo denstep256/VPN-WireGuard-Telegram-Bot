@@ -1,24 +1,27 @@
-import os
-import random
+import logging
+import secrets
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import select
 
 from app.database.models import Server, Subscribers, async_session
+from app.paths import config_file_path
 from app.payments.pricing import format_tariff_lines
-from app.wg_api.wg_api import get_client_count_wg
+from app.settings import wg_max_clients
+from app.time_utils import moscow_today
+from app.wg_api.wg_api import get_client_count_wg, validate_client_name
 
 
-generated_usernames = set()
+logger = logging.getLogger(__name__)
 
 
 def generate_client_name() -> str:
-    while True:
-        random_digits = random.randint(100000, 999999)
-        client_name = f"ZENITH-{random_digits}"
-        if client_name not in generated_usernames:
-            generated_usernames.add(client_name)
-            return client_name
+    # 64 bits of entropy keep collisions negligible even over long-lived installations.
+    return f"ZENITH-{secrets.token_hex(8).upper()}"
+
+
+def server_api_url(server: Server) -> str:
+    return f"https://{str(server.host_ip).strip()}:{server.port}"
 
 
 async def check_available_clients_count(region: str, region_id: int) -> bool:
@@ -27,44 +30,54 @@ async def check_available_clients_count(region: str, region_id: int) -> bool:
             select(Server).where(
                 Server.region == region,
                 Server.region_id == region_id,
-                Server.is_active == True,  # noqa: E712
+                Server.is_active.is_(True),
             )
         )
         server = result.scalar_one_or_none()
         if not server:
             return False
 
-        ip = f"https://{server.host_ip}:{server.port}"
-        count = await get_client_count_wg(ip, server.password)
-        return count < 60
+        try:
+            count = await get_client_count_wg(server_api_url(server), server.password)
+        except Exception:
+            logger.exception(
+                "Failed to check WireGuard capacity: region=%s region_id=%s",
+                region,
+                region_id,
+            )
+            return False
+        return count < wg_max_clients()
 
 
-def delete_file_by_name(client_name: str):
-    file_path = f"app/auth/{client_name}.conf"
-    if os.path.exists(file_path):
-        os.remove(file_path)
+def delete_file_by_name(client_name: str) -> bool:
+    normalized = validate_client_name(client_name)
+    file_path = config_file_path(normalized)
+    if not file_path.exists():
+        return False
+    file_path.unlink()
+    return True
 
 
-async def calculate_expiry_date(payload: str):
-    if payload == "monthly_subs":
-        return (datetime.now() + timedelta(days=31)).date()
-    if payload == "semi_annual_subs":
-        return (datetime.now() + timedelta(days=182)).date()
-    if payload == "annual_subs":
-        return (datetime.now() + timedelta(days=365)).date()
-    raise ValueError("Invalid subscription duration")
+def calculate_expiry_date(payload: str, *, start: date | None = None) -> date:
+    try:
+        months = PLAN_TO_MONTHS[payload]
+    except KeyError as exc:
+        raise ValueError(f"Invalid subscription duration: {payload}") from exc
+    return add_months(start or moscow_today(), months)
 
 
-def determine_subscription_type(days: int) -> str:
-    if days <= 31:
+def determine_subscription_type(months: int) -> str:
+    if months == 1:
         return "monthly_subs"
-    if days <= 183:
+    if months == 6:
         return "semi_annual_subs"
-    return "annual_subs"
+    if months == 12:
+        return "annual_subs"
+    return f"manual_{months}_months"
 
 
 async def get_active_subscriptions(tg_id: int):
-    today = datetime.now().date().isoformat()
+    today = moscow_today().isoformat()
     async with async_session() as session:
         result = await session.execute(
             select(Subscribers).where(
@@ -81,7 +94,13 @@ def format_tariff(tariff_code: str) -> str:
         "semi_annual_subs": "6 месяцев",
         "annual_subs": "12 месяцев",
     }
-    return tariff_map.get(tariff_code, tariff_code)
+    if tariff_code in tariff_map:
+        return tariff_map[tariff_code]
+    if tariff_code.startswith("manual_") and tariff_code.endswith("_months"):
+        month_text = tariff_code.removeprefix("manual_").removesuffix("_months")
+        if month_text.isdigit():
+            return f"{month_text} мес. (выдано администратором)"
+    return tariff_code
 
 
 def parse_date_value(value) -> date | None:
@@ -101,9 +120,9 @@ def parse_date_value(value) -> date | None:
 
 def to_iso_date(value) -> str:
     parsed = parse_date_value(value)
-    if parsed:
-        return parsed.isoformat()
-    return datetime.now().date().isoformat()
+    if parsed is None:
+        raise ValueError(f"Unsupported date value: {value!r}")
+    return parsed.isoformat()
 
 
 def build_tariff_caption(

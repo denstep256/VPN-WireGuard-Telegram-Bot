@@ -19,6 +19,10 @@ ENV/
 *.sqlite3
 *.db
 
+# Generated WireGuard client configurations
+app/auth/
+*.conf
+
 # OS files
 .DS_Store
 Thumbs.db
@@ -41,5 +45,3 @@ Thumbs.db
 *.egg-info/
 
 config.py
-
-app/Pictures/WireGuard_ logo.jpeg

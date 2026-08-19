@@ -1,22 +1,21 @@
 import json
-import logging
-from datetime import datetime
 
-from aiogram.types import Message, FSInputFile, CallbackQuery, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message
 from aiogram.filters import CommandStart
-from sqlalchemy import select
 from aiogram import Router, F
+from aiogram.fsm.context import FSMContext
 
 import app.users.keyboard as kb
-import app.admin.admin_keyboard as admin_kb
 import app.database.requests as rq
-from app.database.models import TestPeriod, Subscribers, async_session, Server
-from config import ADMIN_ID, one_mounth_fake_price, one_mounth_price, six_mounth_price, six_mounth_fake_price, twelve_mounth_price, twelve_mounth_fake_price
+from app.addons.button_text import BUTTON_TEXTS
+from app.paths import TEXTS_PATH
+from app.time_utils import utc_now_naive
+from config import ADMIN_ID
 
 router = Router()
 
 
-with open("app/addons/texts.json", encoding="utf-8") as file_handler:
+with TEXTS_PATH.open(encoding="utf-8") as file_handler:
     text_mess = json.load(file_handler)
     texts_for_bot = text_mess
 
@@ -32,7 +31,7 @@ async def cmd_start(message: Message):
         message.from_user.id,
         message.from_user.username,
         message.from_user.first_name,
-        datetime.now(),
+        utc_now_naive(),
         start_arg=start_arg
     )
 
@@ -47,37 +46,38 @@ async def cmd_start(message: Message):
 
         await message.answer('Вы авторизовались как администратор')
 
-@router.message(F.text == 'Помощь 🆘')
-async def help_main_button(message: Message):
+@router.message(F.text == BUTTON_TEXTS["help"])
+async def show_help(message: Message):
 
     await message.answer(texts_for_bot["help_message"], parse_mode='HTML', reply_markup=kb.help_kb)
 
-@router.message(F.text == 'О VPN ℹ️')
-async def help_main_button(message: Message):
+@router.message(F.text == BUTTON_TEXTS["about"])
+async def show_about(message: Message):
     await message.answer(texts_for_bot["about_message"], parse_mode='HTML')
 
-@router.message(F.text == 'Назад ↩️')
-async def help_main_button(message: Message):
-    if message.from_user.id == int(ADMIN_ID):
-        await message.answer('Вы вернулись в главное меню', reply_markup=kb.get_main_keyboard(message.from_user.id))
-    else:
-        await message.answer('Вы вернулись в главное меню', reply_markup=kb.get_main_keyboard(message.from_user.id))
+@router.message(F.text == BUTTON_TEXTS["back"])
+async def back_to_main(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        'Вы вернулись в главное меню',
+        reply_markup=kb.get_main_keyboard(message.from_user.id),
+    )
 
-@router.message(F.text == 'Как подключить ⚙️')
-async def help_main_button(message: Message):
+@router.message(F.text == BUTTON_TEXTS["how_connect"])
+async def show_connection_help(message: Message):
     await message.answer(texts_for_bot["how_to_connect"], reply_markup=kb.how_to_connect_kb)
 
 
-@router.message(F.text == 'iPhone 📱')
-async def help_main_button(message: Message):
+@router.message(F.text == BUTTON_TEXTS["iphone"])
+async def show_iphone_help(message: Message):
     await message.answer(texts_for_bot['iphone_message'], reply_markup=kb.accept_kb)
 
-@router.message(F.text == 'Android 📱')
-async def help_main_button(message: Message):
+@router.message(F.text == BUTTON_TEXTS["android"])
+async def show_android_help(message: Message):
     await message.answer(texts_for_bot['android_message'], reply_markup=kb.accept_kb)
 
-@router.message(F.text == 'Скачал✅')
-async def help_main_button(message: Message):
+@router.message(F.text == BUTTON_TEXTS["downloaded"])
+async def confirm_download(message: Message):
     # Сообщение с inline кнопками
     await message.answer(
         texts_for_bot['download_message'],

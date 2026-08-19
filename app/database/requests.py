@@ -1,10 +1,11 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from app.database.models import async_session, Referral, PromoCode, PromoRedemption
 from app.database.models import User
 from sqlalchemy import select
 import secrets
 import string
+from app.time_utils import utc_now_naive
 
 
 async def set_user_start(tg_id, username, first_name, date_add, start_arg: str | None = None):
@@ -50,7 +51,7 @@ async def set_user_start(tg_id, username, first_name, date_add, start_arg: str |
 
                 # 1) создать персональный промокод (на будущее: owner_tg_id != None)
                 promo_code = await generate_unique_promo_code(session, prefix="REF10-")
-                promo_expires_at = datetime.utcnow() + timedelta(days=365)
+                promo_expires_at = utc_now_naive() + timedelta(days=365)
                 promo = PromoCode(
                     code=promo_code,
                     discount_percent=10,

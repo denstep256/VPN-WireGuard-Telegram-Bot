@@ -2,7 +2,7 @@ from aiogram.types import (ReplyKeyboardMarkup, KeyboardButton,
                            InlineKeyboardMarkup, InlineKeyboardButton)
 from sqlalchemy import select
 
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.addons.button_text import BUTTON_TEXTS
 from app.database.models import Server, Subscribers
@@ -20,10 +20,10 @@ def get_subscriptions_kb(subs: list[Subscribers]) -> InlineKeyboardMarkup:
     buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-async def get_servers_keyboard(session: Session) -> InlineKeyboardMarkup:
+async def get_servers_keyboard(session: AsyncSession) -> InlineKeyboardMarkup:
     # Получаем активные серверы из БД
     result = await session.execute(
-        select(Server).where(Server.is_active == True).order_by(Server.region)
+        select(Server).where(Server.is_active.is_(True)).order_by(Server.region)
     )
     servers = result.scalars().all()
 
@@ -84,8 +84,7 @@ def get_renew_buy_kb(sub_id: int) -> InlineKeyboardMarkup:
 
 help_kb = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text=BUTTON_TEXTS["write"],
-                          url="https://t.me/ZenithVPN_support",
-                          callback_data='help_button')]])
+                          url="https://t.me/ZenithVPN_support")]])
 
 how_to_connect_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=BUTTON_TEXTS["iphone"])],
                                                   [KeyboardButton(text=BUTTON_TEXTS["android"])],
@@ -100,13 +99,11 @@ back_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=BUTTON_TEXTS["back"
 
 iphone_kb = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text=BUTTON_TEXTS["download"],
-                          url="https://apps.apple.com/ru/app/wireguard/id1441195209",
-                          callback_data='iph_kb')]])
+                          url="https://apps.apple.com/ru/app/wireguard/id1441195209")]])
 
 android_kb = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text=BUTTON_TEXTS["download"],
-                          url="https://play.google.com/store/apps/details?id=com.wireguard.android&pcampaignid=web_share",
-                          callback_data='and_kb')]])
+                          url="https://play.google.com/store/apps/details?id=com.wireguard.android&pcampaignid=web_share")]])
 
 download_kb = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text=BUTTON_TEXTS["instruction_iphone"],

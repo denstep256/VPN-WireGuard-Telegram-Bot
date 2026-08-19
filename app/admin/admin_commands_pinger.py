@@ -6,7 +6,6 @@ from aiogram import Router, F
 from aiogram.types import Message
 from sqlalchemy import select
 
-import app.admin.admin_keyboard as kb
 from app.admin.admin_handlers import is_admin
 from app.database.models import async_session, Server
 from app.users.keyboard import get_main_keyboard
@@ -38,7 +37,12 @@ async def ping_host(host: str) -> bool:
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL
         )
-        await proc.communicate()
+        try:
+            await asyncio.wait_for(proc.communicate(), timeout=5)
+        except TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            return False
         return proc.returncode == 0
     except Exception:
         logger.exception("Ошибка ping_host для host=%s", host)
@@ -53,7 +57,7 @@ async def ping_servers(message: Message):
     async with async_session() as session:
         res = await session.execute(
             select(Server)
-            .where(Server.is_active == True)
+            .where(Server.is_active.is_(True))
             .order_by(Server.region, Server.region_id)
         )
         servers = res.scalars().all()
