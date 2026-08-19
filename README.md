@@ -15,35 +15,40 @@
 ## Требования
 
 - Python 3.10+ (проект проверяется на Python 3.12);
+- Linux с установленным `iputils-ping` для проверки серверов из админки;
 - WireGuard Easy с v14-совместимым API (`/api/session`, `/api/wireguard/client`);
 - Telegram Bot Token и provider token YooKassa;
 - SQLite по умолчанию.
 
 ## Установка
 
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
+```bash
+sudo apt-get update
+sudo apt-get install -y python3 python3-venv iputils-ping ca-certificates
+
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-Copy-Item config.example.py config.py
+cp config.example.py config.py
 ```
 
 Заполните `config.py`. Особое внимание уделите параметру `WG_VERIFY_SSL`: в продакшене он должен оставаться `True`. Значение `False` допустимо только для доверенного сервера с self-signed сертификатом.
 
 Запуск:
 
-```powershell
-python main.py
+```bash
+.venv/bin/python main.py
 ```
 
 При старте приложение проверяет обязательную конфигурацию, создаёт каталог для конфигов и применяет совместимые SQLite-миграции. Секреты и сгенерированные `*.conf` не должны попадать в Git.
 
 ## Проверки перед деплоем
 
-```powershell
-python -m compileall -q main.py app tests
-python -m unittest discover -s tests -v
-python -m pip check
+```bash
+.venv/bin/python -m compileall -q main.py app tests
+.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m pip check
 ```
 
 После автоматических тестов выполните интеграционные сценарии из [TEST_METHODOLOGY_RU.md](TEST_METHODOLOGY_RU.md) на тестовых Telegram/YooKassa и WireGuard Easy. Локальные тесты намеренно не проводят реальные платежи и не создают клиентов на боевом сервере.
@@ -51,6 +56,19 @@ python -m pip check
 Если WireGuard Easy обновляется до v15 или новее, сначала проверьте контракт API в тестовом окружении: в новых основных версиях схема аутентификации и маршруты могут отличаться от v14-совместимого API этого проекта.
 
 Перед обновлением продакшена сделайте резервную копию SQLite и каталога `app/auth`. Не запускайте одновременно две копии polling-бота с одной БД.
+
+## Запуск через systemd
+
+Шаблон находится в `deploy/vpn-bot.service.example`. Перед установкой замените в нём пользователя и путь `/opt/vpn-wireguard-bot` на фактические значения, затем выполните:
+
+```bash
+sudo cp deploy/vpn-bot.service.example /etc/systemd/system/vpn-bot.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now vpn-bot.service
+sudo systemctl status vpn-bot.service
+```
+
+Логи процесса доступны через `journalctl -u vpn-bot.service`; прикладные журналы также записываются в каталог `logs`. Пользователь systemd должен иметь права на запись в рабочий каталог, SQLite-файл, `logs` и каталог из `DIR_CONF`.
 
 ## Структура
 

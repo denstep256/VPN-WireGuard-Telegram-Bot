@@ -18,18 +18,20 @@ def _admin_actor(user) -> str:
     username = user.username or "-"
     return f"{user.id} (@{username})"
 
+
+def _ping_command(host: str, system: str | None = None) -> list[str]:
+    current_system = (system or platform.system()).lower()
+    if current_system == "windows":
+        return ["ping", "-n", "1", host]
+    return ["ping", "-c", "1", host]
+
 async def ping_host(host: str) -> bool:
     """
     ICMP ping до хоста.
     Возвращает True если доступен.
     Работает на macOS / Linux / Windows.
     """
-    system = platform.system().lower()
-
-    if system == "windows":
-        cmd = ["ping", "-n", "1", host]
-    else:
-        cmd = ["ping", "-c", "1", host]
+    cmd = _ping_command(host)
 
     try:
         proc = await asyncio.create_subprocess_exec(
