@@ -45,3 +45,5 @@ Thumbs.db
 *.egg-info/
 
 config.py
+
+opt/bots/ZenithVPN/VPN-WireGuard-Telegram-Bot/app/Pictures
