@@ -10,7 +10,6 @@ BUTTON_TEXTS = {
 
     # Навигация
     "back": "Назад ↩️",
-    "downloaded": "Скачал✅",
 
     # Подписки
     "renew_1": "Продлить на 1 месяц",
@@ -28,17 +27,10 @@ BUTTON_TEXTS = {
     "write": "Написать",
 
     # Скачать
-    "download": "СКАЧАТЬ",
-    "instruction_iphone": "Инструкция для iPhone",
-    "instruction_android": "Инструкция для Android",
-    "check_vpn": "Проверить VPN",
 
     # Платформы
-    "iphone": "iPhone 📱",
-    "android": "Android 📱",
 
     # Система
-    "no_servers": "⚠️ Нет доступных серверов",
 
     # --- Admin main ---
 
@@ -47,7 +39,6 @@ BUTTON_TEXTS = {
     # --- Admin panel ---
     "broadcast": "Рассылка",
     "statistics": "Статистика",
-    "add_server": "Добавить сервер",
     "add_promocode": "Добавить промокод",
     "manage_subs": "Администрирование подписок",
     "ping_servers": "Пинг серверов",

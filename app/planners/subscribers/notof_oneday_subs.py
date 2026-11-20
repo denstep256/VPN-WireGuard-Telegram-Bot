@@ -1,5 +1,8 @@
 import logging
-from datetime import date, timedelta
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+import config
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -16,14 +19,14 @@ logger = logging.getLogger(__name__)
 
 
 async def check_subscriptions(bot: Bot):
-    tomorrow = date.today() + timedelta(days=1)
+    tomorrow = datetime.now(ZoneInfo(config.VPN_TIMEZONE)).date() + timedelta(days=1)
     processed = 0
     sent = 0
     failed = 0
 
     async with async_session() as session:
         result = await session.execute(
-            select(Subscribers).where(Subscribers.notif_oneday == False)  # noqa: E712
+            select(Subscribers).where(Subscribers.notif_oneday.is_(False), Subscribers.provisioned.is_(True))  # noqa: E712
         )
         subscriptions = result.scalars().all()
 

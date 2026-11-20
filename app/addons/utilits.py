@@ -1,83 +1,60 @@
-import os
-import random
+import asyncio
+import html
+import secrets
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import config
 from sqlalchemy import select
 
-from app.database.models import Server, Subscribers, async_session
+from app.database.models import Subscribers, TestPeriod, async_session
 from app.payments.pricing import format_tariff_lines
 from app.vpn.provisioning import (
-    PROTOCOL_WIREGUARD,
-    PROTOCOL_XUI,
-    get_protocol_label,
-    get_vpn_client_count,
-    is_xui_protocol,
-    server_protocol_filter,
+    PROTOCOL_BOTH, PROTOCOL_WIREGUARD, get_protocol_label, get_vpn_client_count, has_wireguard, has_xui,
 )
 from app.xui_api.xui_api import XUIClient
 
 
-generated_usernames = set()
+async def generate_client_name(session) -> str:
+    used = set(await session.scalars(select(Subscribers.file_name).where(Subscribers.file_name.like("ZENITH-%"))))
+    used.update(await session.scalars(select(TestPeriod.file_name).where(TestPeriod.file_name.like("ZENITH-%"))))
+    start = secrets.randbelow(900_000)
+    for offset in range(900_000):
+        name = f"ZENITH-{100_000 + (start + offset) % 900_000}"
+        if name not in used and f"{name}.conf" not in used:
+            return name
+    raise RuntimeError("Все шестизначные имена подписок заняты.")
 
 
-def generate_client_name() -> str:
-    while True:
-        random_digits = random.randint(100000, 999999)
-        client_name = f"ZENITH-{random_digits}"
-        if client_name not in generated_usernames:
-            generated_usernames.add(client_name)
-            return client_name
+async def _xui_has_capacity() -> bool:
+    async with XUIClient.connect() as panel:
+        await panel.get_target_inbound_ids()
+        await panel.subscription_base_url()
+        count = await panel.count_clients()
+        return config.XUI_MAX_CLIENTS <= 0 or count < config.XUI_MAX_CLIENTS
 
 
-async def check_available_clients_count(
-    region: str | None = None,
-    region_id: int | None = None,
-    protocol: str = PROTOCOL_WIREGUARD,
-) -> bool:
-    if not region or region_id is None:
-        return False
-
-    async with async_session() as session:
-        result = await session.execute(
-            select(Server).where(
-                Server.region == region,
-                Server.region_id == region_id,
-                Server.is_active == True,  # noqa: E712
-                server_protocol_filter(protocol),
-            )
-        )
-        server = result.scalar_one_or_none()
-        if not server:
-            return False
-
-        if is_xui_protocol(protocol):
-            max_clients = int(getattr(config, "XUI_MAX_CLIENTS", 0) or 0)
-            inbound_ids = await XUIClient.from_server(server).get_target_inbound_ids()
-            if not inbound_ids:
-                return False
-            count = await get_vpn_client_count(PROTOCOL_XUI, server)
-            if max_clients <= 0:
-                return True
-            return count < max_clients
-
-        count = await get_vpn_client_count(PROTOCOL_WIREGUARD, server)
-        return count < 60
+async def _wireguard_has_capacity() -> bool:
+    count = await get_vpn_client_count(PROTOCOL_WIREGUARD)
+    return config.WG_MAX_CLIENTS <= 0 or count < config.WG_MAX_CLIENTS
 
 
-def delete_file_by_name(client_name: str):
-    file_path = f"app/auth/{client_name}.conf"
-    if os.path.exists(file_path):
-        os.remove(file_path)
+async def check_available_clients_count(protocol: str = PROTOCOL_BOTH) -> bool:
+    checks = []
+    if has_wireguard(protocol):
+        checks.append(_wireguard_has_capacity())
+    if has_xui(protocol):
+        checks.append(_xui_has_capacity())
+    return bool(checks) and all(await asyncio.gather(*checks))
 
 
 async def calculate_expiry_date(payload: str):
     if payload == "monthly_subs":
-        return (datetime.now() + timedelta(days=31)).date()
+        return (datetime.now(ZoneInfo(config.VPN_TIMEZONE)) + timedelta(days=31)).date()
     if payload == "semi_annual_subs":
-        return (datetime.now() + timedelta(days=182)).date()
+        return (datetime.now(ZoneInfo(config.VPN_TIMEZONE)) + timedelta(days=182)).date()
     if payload == "annual_subs":
-        return (datetime.now() + timedelta(days=365)).date()
+        return (datetime.now(ZoneInfo(config.VPN_TIMEZONE)) + timedelta(days=365)).date()
     raise ValueError("Invalid subscription duration")
 
 
@@ -90,12 +67,13 @@ def determine_subscription_type(days: int) -> str:
 
 
 async def get_active_subscriptions(tg_id: int):
-    today = datetime.now().date().isoformat()
+    today = datetime.now(ZoneInfo(config.VPN_TIMEZONE)).date().isoformat()
     async with async_session() as session:
         result = await session.execute(
             select(Subscribers).where(
                 Subscribers.tg_id == tg_id,
                 Subscribers.expiry_date >= today,
+                Subscribers.provisioned.is_(True),
             )
         )
         return result.scalars().all()
@@ -129,35 +107,24 @@ def to_iso_date(value) -> str:
     parsed = parse_date_value(value)
     if parsed:
         return parsed.isoformat()
-    return datetime.now().date().isoformat()
+    return datetime.now(ZoneInfo(config.VPN_TIMEZONE)).date().isoformat()
 
 
 def build_tariff_caption(
-    server_region: str,
-    server_region_id: int,
     discount_percent: int = 0,
     renew_file_name: str | None = None,
-    protocol: str = PROTOCOL_WIREGUARD,
+    protocol: str = PROTOCOL_BOTH,
 ) -> str:
-    protocol_label = get_protocol_label(protocol)
-    lines = [
-        f"🛡️ <b>{protocol_label} VPN</b>",
-        "",
-    ]
-
-    lines.append(f"📍 <b>Сервер:</b> {server_region} №{server_region_id}")
-
+    lines = [f"🛡️ <b>{get_protocol_label(protocol)}</b>", ""]
     if renew_file_name:
-        lines.append(f"🧾 <b>Продление для конфигурации:</b> <code>{renew_file_name}</code>")
-
+        lines.append(f"Продление для <code>{html.escape(renew_file_name)}</code>")
+    else:
+        lines.extend([
+            "🛡️ VLESS — гибкая настройка и хорошая маскировка трафика.",
+            "⚡ WireGuard — проще в подключении и обычно быстрее.",
+        ])
     if discount_percent > 0:
-        lines.extend(
-            [
-                "",
-                f"🎁 <b>Промокод активирован:</b> скидка <b>{discount_percent}%</b> уже учтена в цене.",
-            ]
-        )
-
+        lines.extend(["", f"🎁 Скидка <b>{discount_percent}%</b> уже учтена в цене."])
     lines.append("")
     lines.extend(format_tariff_lines(discount_percent))
     return "\n".join(lines)

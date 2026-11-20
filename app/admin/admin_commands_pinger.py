@@ -4,13 +4,12 @@ import platform
 
 from aiogram import Router, F
 from aiogram.types import Message
-from sqlalchemy import select
+from urllib.parse import urlsplit
 
-import app.admin.admin_keyboard as kb
+import config
+
 from app.admin.admin_handlers import is_admin
-from app.database.models import async_session, Server
 from app.users.keyboard import get_main_keyboard
-from app.vpn.provisioning import PROTOCOL_WIREGUARD, server_protocol_filter
 
 admin_pinger_router = Router()
 logger = logging.getLogger(__name__)
@@ -51,38 +50,17 @@ async def ping_servers(message: Message):
         await message.answer("У вас нет доступа")
         return
 
-    async with async_session() as session:
-        res = await session.execute(
-            select(Server)
-            .where(Server.is_active == True, server_protocol_filter(PROTOCOL_WIREGUARD))  # noqa: E712
-            .order_by(Server.region, Server.region_id)
-        )
-        servers = res.scalars().all()
-
+    servers = [(label, urlsplit(url).hostname) for label, url in (
+        ("WireGuard", config.WG_ADDRESS), ("3x-ui", config.XUI_PANEL_ADDRESS),
+    ) if urlsplit(url).hostname]
     if not servers:
-        await message.answer("Нет активных серверов.")
+        await message.answer("Укажите адреса серверов в config.py.")
         return
+    results = await asyncio.gather(*(ping_host(host) for _, host in servers))
+    lines = ["🩺 <b>Пинг серверов</b>"]
+    for (label, _), is_alive in zip(servers, results):
+        status = "✅ отвечает" if is_alive else "❌ нет ответа"
+        lines.append(f"{label} · {status}")
 
-    await message.answer(f"Проверяю {len(servers)} серверов...")
-
-    # Параллельная проверка (быстро и безопасно)
-    tasks = [ping_host(s.host_ip) for s in servers]
-    results = await asyncio.gather(*tasks)
-
-    lines = ["🩺 <b>Пинг серверов</b>\n"]
-
-    for s, is_alive in zip(servers, results):
-        if is_alive:
-            lines.append(f"✅ <b>{s.region} №{s.region_id}</b> ({s.host_ip})")
-        else:
-            lines.append(f"❌ <b>{s.region} №{s.region_id}</b> ({s.host_ip})")
-
-    alive_count = sum(1 for is_alive in results if is_alive)
-    logger.info(
-        "Админ %s выполнил пинг серверов: всего=%s доступно=%s недоступно=%s",
-        _admin_actor(message.from_user),
-        len(servers),
-        alive_count,
-        len(servers) - alive_count,
-    )
+    logger.info("Админ %s выполнил пинг серверов: %s из %s", _admin_actor(message.from_user), sum(results), len(servers))
     await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=get_main_keyboard(message.from_user.id))

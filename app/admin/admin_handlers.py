@@ -19,7 +19,7 @@ import app.admin.admin_keyboard as kb
 from app.users.keyboard import get_main_keyboard
 from app.vpn.provisioning import PROTOCOL_WIREGUARD, PROTOCOL_XUI, get_vpn_client_count
 from config import ADMIN_ID
-from app.database.models import async_session, TestPeriod, User, Subscribers, Payments, Server
+from app.database.models import async_session, TestPeriod, User, Subscribers, Payments
 
 admin_router = Router()
 logger = logging.getLogger(__name__)
@@ -140,65 +140,20 @@ async def clients_on_servers_wg(message: Message):
         await message.answer("У вас нет доступа")
         return
 
-    async with async_session() as session:
-        res = await session.execute(
-            select(Server)
-            .where(Server.is_active == True)
-            .order_by(Server.region, Server.region_id)
-        )
-        all_servers = res.scalars().all()
-
     total_clients = 0
-    wireguard_servers = [s for s in all_servers if (s.protocol or PROTOCOL_WIREGUARD) == PROTOCOL_WIREGUARD]
-    vless_servers = [s for s in all_servers if s.protocol == PROTOCOL_XUI]
+    lines = ["📊 <b>Клиенты VPN</b>"]
+    for protocol, label in [(PROTOCOL_WIREGUARD, "WireGuard"), (PROTOCOL_XUI, "VLESS")]:
+        try:
+            count = await get_vpn_client_count(protocol)
+            total_clients += count
+            lines.append(f"<b>{label}</b> · {count}")
+        except Exception:
+            logger.exception("Ошибка запроса числа клиентов %s: admin=%s", label, _admin_actor(message.from_user))
+            lines.append(f"<b>{label}</b> · ⚠️ недоступно")
 
-    lines = ["📊 <b>Клиенты VPN по сервисам</b>\n", "<b>WireGuard:</b>"]
+    lines.append(f"\n<b>Итого подключений:</b> {total_clients}")
 
-    if not wireguard_servers:
-        lines.append("• нет активных серверов")
-    else:
-        for s in wireguard_servers:
-            try:
-                count = await get_vpn_client_count(PROTOCOL_WIREGUARD, s)
-                total_clients += int(count)
-                lines.append(f"• <b>{s.region} №{s.region_id}</b>: <b>{count}</b>")
-            except Exception:
-                logger.exception(
-                    "Ошибка запроса клиентов WG: admin=%s region=%s region_id=%s host=%s",
-                    _admin_actor(message.from_user),
-                    s.region,
-                    s.region_id,
-                    s.host_ip,
-                )
-                lines.append(f"• <b>{s.region} №{s.region_id}</b>: ⚠️ ошибка")
-
-    lines.append("\n<b>VLESS:</b>")
-    if not vless_servers:
-        lines.append("• нет активных серверов")
-    else:
-        for s in vless_servers:
-            try:
-                count = await get_vpn_client_count(PROTOCOL_XUI, s)
-                total_clients += int(count)
-                lines.append(f"• <b>{s.region} №{s.region_id}</b>: <b>{count}</b>")
-            except Exception:
-                logger.exception(
-                    "Ошибка запроса клиентов VLESS: admin=%s region=%s region_id=%s host=%s",
-                    _admin_actor(message.from_user),
-                    s.region,
-                    s.region_id,
-                    s.host_ip,
-                )
-                lines.append(f"• <b>{s.region} №{s.region_id}</b>: ⚠️ ошибка")
-
-    lines.append(f"\n<b>Итого клиентов:</b> {total_clients}")
-
-    logger.info(
-        "Админ %s получил статистику клиентов VPN: серверов=%s всего_клиентов=%s",
-        _admin_actor(message.from_user),
-        len(all_servers),
-        total_clients,
-    )
+    logger.info("Админ %s получил статистику подключений: %s", _admin_actor(message.from_user), total_clients)
     await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb.stat_kb)
 
 # ====== Users -> Excel + summary ======
@@ -210,7 +165,7 @@ async def users_excel(message: Message):
 
     async with async_session() as session:
         res = await session.execute(
-            select(User.id, User.tg_id, User.username, User.first_name, User.date).order_by(User.id)
+            select(User.id, User.tg_id, User.username, User.first_name, User.date, User.protocol).order_by(User.id)
         )
         rows = res.all()
 
@@ -226,7 +181,7 @@ async def users_excel(message: Message):
         message=message,
         filename="users.xlsx",
         sheet_name="users",
-        headers=["id", "tg_id", "username", "first_name", "date"],
+        headers=["id", "tg_id", "username", "first_name", "date", "protocol"],
         rows=rows,
     )
     logger.info(

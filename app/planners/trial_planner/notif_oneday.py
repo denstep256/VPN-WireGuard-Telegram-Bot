@@ -1,4 +1,7 @@
-from datetime import date, timedelta
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+import config
 
 from aiogram import Bot
 from apscheduler.triggers.cron import CronTrigger
@@ -15,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 async def check_subscriptions_trial(bot: Bot):
-    tomorrow = date.today() + timedelta(days=1)
+    tomorrow = datetime.now(ZoneInfo(config.VPN_TIMEZONE)).date() + timedelta(days=1)
     processed = 0
     sent = 0
     failed = 0

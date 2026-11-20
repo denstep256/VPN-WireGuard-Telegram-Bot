@@ -1,14 +1,15 @@
 import json
 import logging
-from datetime import date, datetime
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import config
 from aiogram import Bot, F, Router
 from aiogram.types import CallbackQuery, LabeledPrice, Message, PreCheckoutQuery
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 
 from app.addons.utilits import add_months, parse_date_value
-from app.database.models import Payments, Server, Subscribers, User, async_session
+from app.database.models import Payments, Subscribers, User, async_session, refresh_user_protocol
 from app.payments.pricing import (
     MIN_PAY_RUB,
     PLAN_TO_MONTHS,
@@ -23,12 +24,9 @@ from app.payments.pricing import (
     parse_renew_payload,
 )
 from app.vpn.provisioning import (
-    PROTOCOL_WIREGUARD,
-    format_service_location,
     get_protocol_label,
     get_record_protocol,
-    restore_vpn_access,
-    server_protocol_filter,
+    create_vpn_access,
     send_access_to_user,
     update_vpn_expiry,
 )
@@ -66,7 +64,7 @@ async def create_invoice_for_renew(call: CallbackQuery):
 
     async with async_session() as session:
         sub_res = await session.execute(
-            select(Subscribers).where(Subscribers.id == sub_id, Subscribers.tg_id == tg_id)
+            select(Subscribers).where(Subscribers.id == sub_id, Subscribers.tg_id == tg_id, Subscribers.provisioned.is_(True))
         )
         sub = sub_res.scalar_one_or_none()
         if not sub:
@@ -151,6 +149,7 @@ async def renew_pre_checkout(pre_checkout_query: PreCheckoutQuery, bot: Bot):
             select(Subscribers).where(
                 Subscribers.id == sub_id,
                 Subscribers.tg_id == pre_checkout_query.from_user.id,
+                Subscribers.provisioned.is_(True),
             )
         )
         sub = res.scalar_one_or_none()
@@ -195,9 +194,16 @@ async def handle_renew_success(message: Message):
     provider_payment_charge_id = message.successful_payment.provider_payment_charge_id
 
     months = PLAN_TO_MONTHS[plan]
-    today = date.today()
+    today = datetime.now(ZoneInfo(config.VPN_TIMEZONE)).date()
 
     async with async_session() as session:
+        await session.execute(text("BEGIN IMMEDIATE"))
+        already_paid = await session.scalar(select(Payments.id).where(
+            Payments.provider_payment_charge_id == provider_payment_charge_id,
+        ).limit(1))
+        if already_paid is not None:
+            return
+
         prev_payments_count = await get_user_payments_count(session, tg_id)
         is_first_payment = prev_payments_count == 0
 
@@ -215,7 +221,7 @@ async def handle_renew_success(message: Message):
             return
 
         sub_res = await session.execute(
-            select(Subscribers).where(Subscribers.id == sub_id, Subscribers.tg_id == tg_id)
+            select(Subscribers).where(Subscribers.id == sub_id, Subscribers.tg_id == tg_id, Subscribers.provisioned.is_(True))
         )
         sub = sub_res.scalar_one_or_none()
         if not sub:
@@ -267,104 +273,46 @@ async def handle_renew_success(message: Message):
         )
 
         await mark_promo_used_if_applicable(session, tg_id, is_first_payment)
+        await refresh_user_protocol(session, tg_id)
         await session.commit()
 
-        server_region = sub.server_region
-        server_region_id = sub.server_region_id
-        file_name = sub.file_name
         protocol = get_record_protocol(sub)
-        xui_sub_id = sub.xui_sub_id
-        srv_res = await session.execute(
-            select(Server).where(
-                Server.region == server_region,
-                Server.region_id == server_region_id,
-                Server.is_active == True,  # noqa: E712
-                server_protocol_filter(protocol),
-            )
-        )
-        server = srv_res.scalar_one_or_none()
         was_expired = current_expiry is None or current_expiry < today
         logger.info(
-            "Успешное продление подписки: tg_id=%s username=%s sub_id=%s plan=%s protocol=%s months=%s amount_rub=%s bonus_spent=%s discount=%s new_expiry=%s was_expired=%s payment_charge_id=%s",
-            tg_id,
-            username,
-            sub_id,
-            plan,
-            protocol,
-            months,
-            paid_rub,
-            bonus_to_spend,
-            discount_from_payload,
-            new_expiry.isoformat(),
-            was_expired,
-            provider_payment_charge_id,
+            "Успешное продление: tg_id=%s sub_id=%s protocol=%s new_expiry=%s charge=%s",
+            tg_id, sub_id, protocol, new_expiry, provider_payment_charge_id,
         )
 
     restore_message = ""
-    if protocol != PROTOCOL_WIREGUARD and not was_expired:
-        try:
-            await update_vpn_expiry(
-                protocol=protocol,
-                client_name=file_name,
-                expiry_date=new_expiry,
-                server=server,
-            )
-        except Exception:
-            logger.exception(
-                "Ошибка синхронизации срока VLESS после продления: tg_id=%s sub_id=%s client=%s",
-                tg_id,
-                sub_id,
-                file_name,
-            )
-            restore_message = "\n⚠️ Не удалось синхронизировать срок в VLESS. Напишите в поддержку."
-
-    if was_expired:
-        if not server:
-            logger.error(
-                "Не найден сервер для восстановления после продления: tg_id=%s sub_id=%s protocol=%s region=%s region_id=%s",
-                tg_id,
-                sub_id,
-                protocol,
-                server_region,
-                server_region_id,
-            )
-            restore_message = "\n⚠️ Сервер для восстановления конфигурации недоступен. Напишите в поддержку."
-        else:
-            try:
-                access = await restore_vpn_access(
-                    protocol=protocol,
-                    client_name=file_name,
-                    expiry_date=new_expiry,
-                    tg_id=tg_id,
-                    username=username,
-                    server=server,
-                    xui_sub_id=xui_sub_id,
-                )
-                if access.xui_sub_id and access.xui_sub_id != xui_sub_id:
-                    async with async_session() as session:
-                        await session.execute(
-                            update(Subscribers)
-                            .where(Subscribers.id == sub_id)
-                            .values(xui_sub_id=access.xui_sub_id)
-                        )
-                        await session.commit()
-                await send_access_to_user(message, access)
-            except Exception:
-                logger.exception(
-                    "Ошибка восстановления VPN-доступа после продления: tg_id=%s sub_id=%s client=%s protocol=%s region=%s region_id=%s",
-                    tg_id,
-                    sub_id,
-                    file_name,
-                    protocol,
-                    server_region,
-                    server_region_id,
-                )
-                restore_message = "\n⚠️ Не удалось автоматически восстановить конфигурацию. Напишите в поддержку."
+    try:
+        async with async_session.begin() as session:
+            await session.execute(text("BEGIN IMMEDIATE"))
+            current = await session.get(Subscribers, sub_id)
+            if current is not None:
+                if was_expired:
+                    access = await create_vpn_access(
+                        protocol=get_record_protocol(current), client_name=current.file_name,
+                        expiry_date=current.expiry_date, tg_id=tg_id,
+                        username=username, xui_sub_id=current.xui_sub_id,
+                    )
+                    current.xui_sub_id = access.xui_sub_id
+                else:
+                    access = None
+                    await update_vpn_expiry(
+                        protocol=get_record_protocol(current), client_name=current.file_name,
+                        expiry_date=current.expiry_date,
+                    )
+            else:
+                access = None
+        if access is not None:
+            await send_access_to_user(message, access)
+    except Exception:
+        logger.exception("Не удалось синхронизировать продление: tg_id=%s sub_id=%s", tg_id, sub_id)
+        restore_message = "\n⚠️ Не удалось обновить доступ на сервере. Напишите в поддержку."
 
     await message.answer(
         "✅ <b>Подписка продлена!</b>\n\n"
         f"🛡️ <b>Протокол:</b> {get_protocol_label(protocol)}\n"
-        f"📍 <b>Сервер:</b> {format_service_location(protocol, server_region, server_region_id)}\n"
         f"💳 <b>Тариф:</b> {RENEW_LABELS[plan]}\n"
         f"💰 <b>Списано бонусов:</b> {bonus_to_spend} ₽\n"
         f"⏳ <b>Активна до:</b> <b>{new_expiry.isoformat()}</b>"

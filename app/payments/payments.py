@@ -1,18 +1,19 @@
+import asyncio
 import json
 import logging
 from datetime import datetime
-from typing import Optional
+from hashlib import blake2s
+from zoneinfo import ZoneInfo
 
 import config
 from aiogram import Bot, F, Router
 from aiogram.types import CallbackQuery, LabeledPrice, Message, PreCheckoutQuery
-from sqlalchemy import select, update
+from sqlalchemy import select, text
 
-from app.addons.utilits import calculate_expiry_date, check_available_clients_count, generate_client_name
-from app.database.models import Payments, Referral, Server, Subscribers, User, async_session
+from app.addons.utilits import calculate_expiry_date, check_available_clients_count, generate_client_name, parse_date_value
+from app.database.models import Payments, Referral, Subscribers, User, async_session, refresh_user_protocol
 from app.payments.pricing import (
     CALLBACK_TO_PAYLOAD_PLAN,
-    MIN_PAY_RUB,
     PLAN_LABELS,
     PLAN_RECEIPT_DESCRIPTIONS,
     PLAN_TITLES,
@@ -28,46 +29,14 @@ from app.payments.pricing import (
     parse_buy_payload,
 )
 from app.vpn.provisioning import (
-    PROTOCOL_WIREGUARD,
+    AccessResult,
     create_vpn_access,
-    format_service_location,
     get_protocol_label,
     send_access_to_user,
-    server_protocol_filter,
 )
 
 pay_router = Router()
 logger = logging.getLogger(__name__)
-
-
-def _parse_callback_data(data: str) -> tuple[Optional[str], Optional[str], Optional[str], Optional[int]]:
-    parts = (data or "").split("|")
-    if len(parts) < 3:
-        return None, None, None, None
-
-    callback_plan = parts[0]
-    if len(parts) >= 4 and parts[1] in {"wireguard", "xui"}:
-        protocol, region, region_id_str = parts[1], parts[2], parts[3]
-    else:
-        protocol, region, region_id_str = PROTOCOL_WIREGUARD, parts[1], parts[2]
-
-    if callback_plan not in CALLBACK_TO_PAYLOAD_PLAN:
-        return None, None, None, None
-    if not region_id_str.isdigit():
-        return None, None, None, None
-    return callback_plan, protocol, region, int(region_id_str)
-
-
-async def _get_server(session, region: str, region_id: int, protocol: str) -> Optional[Server]:
-    result = await session.execute(
-        select(Server).where(
-            Server.region == region,
-            Server.region_id == region_id,
-            Server.is_active == True,  # noqa: E712
-            server_protocol_filter(protocol),
-        )
-    )
-    return result.scalar_one_or_none()
 
 
 async def _apply_referral_bonus_if_applicable(session, buyer_tg_id: int, bot: Bot) -> None:
@@ -143,18 +112,9 @@ async def _send_invoice(
     )
 
 
-@pay_router.callback_query(
-    F.data.startswith("one_month|")
-    | F.data.startswith("six_month|")
-    | F.data.startswith("twelve_month|")
-)
+@pay_router.callback_query(F.data.split("|")[0].in_(CALLBACK_TO_PAYLOAD_PLAN))
 async def create_invoice_any(call: CallbackQuery):
-    callback_plan, protocol, region, region_id = _parse_callback_data(call.data)
-    if not callback_plan or not protocol or not region or region_id is None:
-        await call.answer("❌ Ошибка данных.", show_alert=True)
-        return
-
-    plan = CALLBACK_TO_PAYLOAD_PLAN[callback_plan]
+    plan = CALLBACK_TO_PAYLOAD_PLAN[call.data.split("|", 1)[0]]
     base_price = get_base_price(plan)
 
     async with async_session() as session:
@@ -165,14 +125,7 @@ async def create_invoice_any(call: CallbackQuery):
     bonus_to_use = calc_bonus_to_use(price_after_discount, bonus_balance)
     final_pay_price = price_after_discount - bonus_to_use
 
-    payload = build_buy_payload(
-        base_plan=plan,
-        region=region,
-        region_id=region_id,
-        discount=discount,
-        bonus_used=bonus_to_use,
-        protocol=protocol,
-    )
+    payload = build_buy_payload(plan, discount, bonus_to_use)
 
     await _send_invoice(
         call,
@@ -192,7 +145,7 @@ async def create_invoice_any(call: CallbackQuery):
 )
 async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: Bot):
     try:
-        _, protocol, region, region_id, _, _ = parse_buy_payload(pre_checkout_query.invoice_payload)
+        _, protocol, _, _ = parse_buy_payload(pre_checkout_query.invoice_payload)
     except ValueError:
         await bot.answer_pre_checkout_query(
             pre_checkout_query.id,
@@ -202,14 +155,13 @@ async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: 
         return
 
     try:
-        is_available = await check_available_clients_count(region=region, region_id=region_id, protocol=protocol)
+        async with asyncio.timeout(8):
+            is_available = await check_available_clients_count(protocol)
     except Exception:
         logger.exception(
-            "Ошибка проверки доступности перед платежом: tg_id=%s protocol=%s region=%s region_id=%s",
+            "Ошибка проверки доступности перед платежом: tg_id=%s protocol=%s",
             pre_checkout_query.from_user.id,
             protocol,
-            region,
-            region_id,
         )
         is_available = False
 
@@ -224,6 +176,27 @@ async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: 
     )
 
 
+async def issue_subscription(client_name: str, tg_id: int) -> tuple[AccessResult, str] | None:
+    async with async_session.begin() as session:
+        await session.execute(text("BEGIN IMMEDIATE"))
+        sub = await session.scalar(select(Subscribers).where(
+            Subscribers.file_name == client_name, Subscribers.tg_id == tg_id,
+        ))
+        if sub is None or sub.provisioned:
+            return None
+        expiry_date = parse_date_value(sub.expiry_date)
+        if expiry_date is None or expiry_date < datetime.now(ZoneInfo(config.VPN_TIMEZONE)).date():
+            raise ValueError("Срок оплаченного доступа уже истёк.")
+        access = await create_vpn_access(
+            protocol=sub.protocol, client_name=sub.file_name, expiry_date=sub.expiry_date,
+            tg_id=tg_id, username=sub.username, xui_sub_id=sub.xui_sub_id,
+        )
+        sub.xui_sub_id = access.xui_sub_id
+        sub.provisioned = True
+        await refresh_user_protocol(session, tg_id)
+        return access, sub.expiry_date
+
+
 @pay_router.message(
     F.successful_payment.invoice_payload.startswith("monthly_subs")
     | F.successful_payment.invoice_payload.startswith("semi_annual_subs")
@@ -231,7 +204,7 @@ async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: 
 )
 async def handle_successful_payment(message: Message):
     try:
-        plan, protocol, region, region_id, discount_from_payload, bonus_reserved = parse_buy_payload(
+        plan, protocol, discount_from_payload, bonus_reserved = parse_buy_payload(
             message.successful_payment.invoice_payload
         )
     except ValueError:
@@ -248,139 +221,67 @@ async def handle_successful_payment(message: Message):
     paid_rub = int(message.successful_payment.total_amount / 100)
     provider_payment_charge_id = message.successful_payment.provider_payment_charge_id
 
-    async with async_session() as session:
-        prev_payments_count = await get_user_payments_count(session, tg_id)
-        is_first_payment = prev_payments_count == 0
+    bonus_spent = None
 
-        user_result = await session.execute(select(User).where(User.tg_id == tg_id))
-        user = user_result.scalar_one_or_none()
-        if not user:
-            logger.error(
-                "Пользователь не найден при обработке успешного платежа: tg_id=%s plan=%s payment_charge_id=%s",
-                tg_id,
-                plan,
-                provider_payment_charge_id,
-            )
-            await message.answer("❌ Пользователь не найден.")
+    async with async_session.begin() as session:
+        await session.execute(text("BEGIN IMMEDIATE"))
+        paid = await session.scalar(select(Payments.id).where(
+            Payments.provider_payment_charge_id == provider_payment_charge_id,
+        ).limit(1))
+        if paid is not None:
+            client_name = await session.scalar(select(Subscribers.file_name).where(
+                Subscribers.purchase_charge_id == provider_payment_charge_id, Subscribers.tg_id == tg_id,
+            ))
+            if client_name is None:
+                # Purchases made before numeric names used a deterministic name.
+                digest = blake2s(provider_payment_charge_id.encode(), digest_size=8).hexdigest()
+                client_name = f"ZENITH-{digest}"
+        else:
+            client_name = await generate_client_name(session)
+            user = await session.scalar(select(User).where(User.tg_id == tg_id))
+            if user is None:
+                logger.error("Пользователь %s не найден для платежа %s", tg_id, provider_payment_charge_id)
+                await message.answer("❌ Пользователь не найден.")
+                return
+
+            is_first_payment = await get_user_payments_count(session, tg_id) == 0
+            current_bonus = int(user.bonus_balance or 0)
+            discounted = apply_discount(get_base_price(plan), discount_from_payload)
+            bonus_spent = min(bonus_reserved, calc_bonus_to_use(discounted, current_bonus))
+            user.bonus_balance = current_bonus - bonus_spent
+            session.add(Payments(
+                tg_id=tg_id, username=username, price=paid_rub, date=datetime.now(),
+                tarific_plan=plan, provider_payment_charge_id=provider_payment_charge_id,
+            ))
+            session.add(Subscribers(
+                tg_id=tg_id, username=username, file_name=client_name, subscription=plan,
+                expiry_date=(await calculate_expiry_date(plan)).isoformat(),
+                server_region="", server_region_id=0, protocol=protocol,
+                notif_oneday=False, provisioned=False, purchase_charge_id=provider_payment_charge_id,
+            ))
+            await mark_promo_used_if_applicable(session, tg_id, is_first_payment)
+            if is_first_payment:
+                await _apply_referral_bonus_if_applicable(session, tg_id, message.bot)
+
+    try:
+        result = await issue_subscription(client_name, tg_id)
+        if result is None:
             return
-
-        current_bonus = int(getattr(user, "bonus_balance", 0) or 0)
-        base_price = get_base_price(plan)
-        price_after_discount = apply_discount(base_price, int(discount_from_payload or 0))
-        max_bonus_allowed = calc_bonus_to_use(price_after_discount, current_bonus)
-        bonus_to_spend = min(int(bonus_reserved or 0), int(max_bonus_allowed), int(current_bonus))
-
-        if price_after_discount - bonus_to_spend < MIN_PAY_RUB:
-            bonus_to_spend = max(0, price_after_discount - MIN_PAY_RUB)
-
-        if bonus_to_spend > 0:
-            user.bonus_balance = current_bonus - bonus_to_spend
-
-        session.add(
-            Payments(
-                tg_id=tg_id,
-                username=username,
-                price=paid_rub,
-                date=datetime.now(),
-                tarific_plan=plan,
-                provider_payment_charge_id=provider_payment_charge_id,
-            )
+        access, expiry = result
+    except Exception:
+        logger.exception(
+            "Ошибка выдачи оплаченного доступа: tg_id=%s client=%s charge=%s",
+            tg_id, client_name, provider_payment_charge_id,
         )
-        await session.commit()
-
-        expiry_date = await calculate_expiry_date(plan)
-        client_name = generate_client_name()
-
-        new_subscriber = Subscribers(
-            tg_id=tg_id,
-            username=username,
-            file_name="pending",
-            subscription=plan,
-            expiry_date=expiry_date.isoformat(),
-            server_region=region,
-            server_region_id=region_id,
-            protocol=protocol,
-            notif_oneday=False,
+        await message.answer(
+            "⚠️ Оплата прошла. Повторите выдачу в «Моих подписках» или напишите в поддержку."
         )
-        session.add(new_subscriber)
-        await session.flush()
+        return
 
-        server = await _get_server(session, region, region_id, protocol)
-
-        if not server:
-            logger.error(
-                "Сервер недоступен после успешного платежа: tg_id=%s plan=%s protocol=%s region=%s region_id=%s payment_charge_id=%s",
-                tg_id,
-                plan,
-                protocol,
-                region,
-                region_id,
-                provider_payment_charge_id,
-            )
-            await session.rollback()
-            await message.answer(
-                "⚠️ Оплата прошла, но сервер недоступен. Напишите в поддержку, мы вручную выдадим доступ."
-            )
-            return
-
-        try:
-            access = await create_vpn_access(
-                protocol=protocol,
-                client_name=client_name,
-                expiry_date=expiry_date,
-                tg_id=tg_id,
-                username=username,
-                server=server,
-            )
-        except Exception:
-            logger.exception(
-                "Ошибка выдачи VPN-доступа после успешной оплаты: tg_id=%s sub_id=%s client=%s protocol=%s region=%s region_id=%s payment_charge_id=%s",
-                tg_id,
-                new_subscriber.id,
-                client_name,
-                protocol,
-                region,
-                region_id,
-                provider_payment_charge_id,
-            )
-            await session.rollback()
-            await message.answer(
-                "⚠️ Оплата прошла, но произошла ошибка выдачи конфигурации. Напишите в поддержку."
-            )
-            return
-
-        await session.execute(
-            update(Subscribers)
-            .where(Subscribers.id == new_subscriber.id)
-            .values(file_name=client_name, notif_oneday=False, xui_sub_id=access.xui_sub_id)
-        )
-
-        await mark_promo_used_if_applicable(session, tg_id, is_first_payment)
-        if is_first_payment:
-            await _apply_referral_bonus_if_applicable(session, tg_id, message.bot)
-
-        await session.commit()
-        logger.info(
-            "Успешная покупка подписки: tg_id=%s username=%s sub_id=%s plan=%s protocol=%s amount_rub=%s bonus_spent=%s discount=%s region=%s region_id=%s expiry=%s payment_charge_id=%s",
-            tg_id,
-            username,
-            new_subscriber.id,
-            plan,
-            protocol,
-            paid_rub,
-            bonus_to_spend,
-            discount_from_payload,
-            region,
-            region_id,
-            expiry_date.isoformat(),
-            provider_payment_charge_id,
-        )
-
+    bonus_text = f"\n💳 <b>Списано бонусов:</b> {bonus_spent} ₽" if bonus_spent else ""
     await message.answer(
-        f"✅ Ваша подписка успешно оформлена до <b>{expiry_date.isoformat()}</b>.\n\n"
-        f"🛡️ <b>Протокол:</b> {get_protocol_label(protocol)}\n"
-        f"📍 <b>Сервер:</b> {format_service_location(protocol, region, region_id)}\n"
-        f"💳 <b>Списано бонусов:</b> {bonus_to_spend} ₽",
+        f"✅ Ваша подписка успешно оформлена до <b>{expiry}</b>.\n"
+        f"🛡️ {get_protocol_label(access.protocol)}{bonus_text}",
         parse_mode="HTML",
     )
     await send_access_to_user(message, access)

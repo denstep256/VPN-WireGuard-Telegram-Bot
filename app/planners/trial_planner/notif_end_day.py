@@ -1,91 +1,62 @@
-from datetime import date
+import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 from apscheduler.triggers.cron import CronTrigger
-from sqlalchemy import select, update
-import logging
+from sqlalchemy import func, select, text
 
+import config
 from app.addons.utilits import parse_date_value
-from app.database.models import Server, TestPeriod, async_session
+from app.database.models import TestPeriod, async_session, refresh_user_protocol
 from app.planners.scheduler_runtime import get_scheduler
 from app.users.handlers import texts_for_bot
-from app.vpn.provisioning import get_record_protocol, remove_trial_access
-
+from app.vpn.provisioning import get_record_protocol, remove_vpn_access
 
 logger = logging.getLogger(__name__)
 
 
 async def check_subscriptions_trial(bot: Bot):
-    today = date.today()
-    processed = 0
-    notified = 0
-    failed_notify = 0
-    failed_remove_remote = 0
-
+    today = datetime.now(ZoneInfo(config.VPN_TIMEZONE)).date()
     async with async_session() as session:
-        trials_result = await session.execute(select(TestPeriod).where(TestPeriod.subscription == "trial"))
-        trials = trials_result.scalars().all()
+        ids = (await session.scalars(select(TestPeriod.id).where(
+            TestPeriod.subscription.in_(("trial", "trial_pending")), func.date(TestPeriod.expiry_date) < today.isoformat(),
+        ))).all()
 
-        servers_result = await session.execute(select(Server))
-        servers = servers_result.scalars().all()
+    for trial_id in ids:
+        try:
+            async with async_session.begin() as session:
+                await session.execute(text("BEGIN IMMEDIATE"))
+                trial = await session.get(TestPeriod, trial_id)
+                if trial is None or trial.subscription not in {"trial", "trial_pending"}:
+                    continue
+                expiry = parse_date_value(trial.expiry_date)
+                if expiry is None or expiry >= today:
+                    continue
+                await remove_vpn_access(protocol=get_record_protocol(trial), client_name=trial.file_name)
+                if trial.subscription == "trial_pending":
+                    await session.delete(trial)
+                    continue
+                trial.subscription = "trial_used"
+                trial.notif_oneday = True
+                await refresh_user_protocol(session, trial.tg_id)
+        except Exception:
+            logger.exception("Не удалось отозвать пробный доступ: trial_id=%s", trial_id)
+            continue
 
-        for trial in trials:
-            expiry = parse_date_value(trial.expiry_date)
-            if expiry != today:
-                continue
-            processed += 1
-
-            try:
-                await bot.send_message(
-                    chat_id=trial.tg_id,
-                    text=texts_for_bot["end_trial_sub"],
-                    parse_mode="HTML",
-                )
-                notified += 1
-            except Exception:
-                failed_notify += 1
-                logger.exception(
-                    "Failed to send end-day trial notification: trial_id=%s tg_id=%s",
-                    trial.id,
-                    trial.tg_id,
-                )
-
-            try:
-                await remove_trial_access(trial=trial, servers=servers)
-            except Exception:
-                failed_remove_remote += 1
-                logger.exception(
-                    "Failed to remove trial VPN client: trial_id=%s protocol=%s file_name=%s",
-                    trial.id,
-                    get_record_protocol(trial),
-                    trial.file_name,
-                )
-
-            await session.execute(
-                update(TestPeriod)
-                .where(TestPeriod.id == trial.id)
-                .values(subscription="trial_used", notif_oneday=True)
-            )
-
-        await session.commit()
-    logger.info(
-        "Scheduler run check_subscriptions_trial_endday finished: processed=%s notified=%s failed_notify=%s failed_remove_remote=%s target_date=%s",
-        processed,
-        notified,
-        failed_notify,
-        failed_remove_remote,
-        today.isoformat(),
-    )
+        if (today - expiry).days > 1:
+            continue
+        try:
+            await bot.send_message(trial.tg_id, texts_for_bot["end_trial_sub"], parse_mode="HTML")
+        except Exception:
+            logger.exception("Не удалось отправить уведомление о пробном доступе: trial_id=%s", trial_id)
 
 
 def setup_scheduler_trial_notif_end_day(bot: Bot):
-    scheduler = get_scheduler()
-    scheduler.add_job(
+    get_scheduler().add_job(
         check_subscriptions_trial,
-        #trigger=CronTrigger(hour=11, minute=15),
-        trigger=CronTrigger(hour=18, minute=57),
-        id="check_subscriptions_trial_endday",
+        trigger=CronTrigger(hour=0, minute=6, timezone=config.VPN_TIMEZONE),
+        id="check_subscriptions_trial_notif_end_day",
         kwargs={"bot": bot},
         replace_existing=True,
     )
-    logger.info("Scheduler job registered: check_subscriptions_trial_endday (11:15 Europe/Moscow)")

@@ -1,7 +1,8 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import BigInteger, String, Boolean, UniqueConstraint, DateTime, Integer, ForeignKey, inspect, text
+from sqlalchemy import BigInteger, case, String, Boolean, UniqueConstraint, DateTime, Integer, ForeignKey, func, inspect, select, text, update
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 
@@ -9,7 +10,7 @@ import config
 
 logger = logging.getLogger(__name__)
 
-engine = create_async_engine(url=config.DB_URL_USERS)
+engine = create_async_engine(url=config.DB_URL_USERS, connect_args={"timeout": 45})
 
 
 async_session = async_sessionmaker(engine, expire_on_commit=False)
@@ -26,6 +27,7 @@ class User(Base):
     first_name: Mapped[str] = mapped_column(String(25), nullable=True)
     bonus_balance: Mapped[int] = mapped_column(Integer, default=0)
     date: Mapped[str] = mapped_column(String(25))
+    protocol: Mapped[str | None] = mapped_column(String(25), nullable=True)
 
 
 class Payments(Base):
@@ -53,6 +55,8 @@ class Subscribers(Base):
     protocol: Mapped[str] = mapped_column(String(25), default="wireguard", server_default="wireguard")
     xui_sub_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     notif_oneday = mapped_column(Boolean, default=False)
+    purchase_charge_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provisioned: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"))
     #note нужно для ручного добавления подписки
     note: Mapped[str | None] = mapped_column(String, nullable=True, default="")
 
@@ -70,24 +74,6 @@ class TestPeriod(Base):
     protocol: Mapped[str] = mapped_column(String(25), default="wireguard", server_default="wireguard")
     xui_sub_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     notif_oneday = mapped_column(Boolean, default=False)
-
-class Server(Base):
-    __tablename__ = 'servers'
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    region = mapped_column(String(25))
-    region_id: Mapped[int] = mapped_column()
-    protocol: Mapped[str] = mapped_column(String(25), default="wireguard", server_default="wireguard")
-    host_ip = mapped_column(String(255))
-    port = mapped_column(String(25))
-    password = mapped_column(String(255))
-    panel_base_path: Mapped[str | None] = mapped_column(String(255), nullable=True, default="")
-    inbound_ids: Mapped[str | None] = mapped_column(String(255), nullable=True, default="")
-    subscription_address: Mapped[str | None] = mapped_column(String(255), nullable=True, default="")
-    subscription_port: Mapped[str | None] = mapped_column(String(25), nullable=True, default="")
-    subscription_path: Mapped[str | None] = mapped_column(String(255), nullable=True, default="")
-    date = mapped_column(String(25))
-    is_active = mapped_column(Boolean, default=True)
 
 class Referral(Base):
     __tablename__ = "referrals"
@@ -159,12 +145,33 @@ async def _run_lightweight_migrations(conn) -> None:
     await _ensure_column(conn, "test_period", "xui_sub_id", "xui_sub_id VARCHAR(64)")
     await _ensure_column(conn, "test_period", "server_region", "server_region VARCHAR(25)")
     await _ensure_column(conn, "test_period", "server_region_id", "server_region_id INTEGER")
-    await _ensure_column(conn, "servers", "protocol", "protocol VARCHAR(25) DEFAULT 'wireguard'")
-    await _ensure_column(conn, "servers", "panel_base_path", "panel_base_path VARCHAR(255)")
-    await _ensure_column(conn, "servers", "inbound_ids", "inbound_ids VARCHAR(255)")
-    await _ensure_column(conn, "servers", "subscription_address", "subscription_address VARCHAR(255)")
-    await _ensure_column(conn, "servers", "subscription_port", "subscription_port VARCHAR(25)")
-    await _ensure_column(conn, "servers", "subscription_path", "subscription_path VARCHAR(255)")
+    await _ensure_column(conn, "users", "protocol", "protocol VARCHAR(25)")
+    await _ensure_column(conn, "subscribers", "purchase_charge_id", "purchase_charge_id VARCHAR(255)")
+    await _ensure_column(conn, "subscribers", "provisioned", "provisioned BOOLEAN NOT NULL DEFAULT 1")
+
+
+async def refresh_user_protocol(session, tg_id: int | None = None) -> None:
+    today = datetime.now(ZoneInfo(config.VPN_TIMEZONE)).date().isoformat()
+    paid = select(Subscribers.protocol).where(
+        Subscribers.tg_id == User.tg_id, Subscribers.provisioned.is_(True),
+        func.date(Subscribers.expiry_date) >= today,
+    ).correlate(User)
+    trial = select(TestPeriod.protocol).where(
+        TestPeriod.tg_id == User.tg_id, TestPeriod.subscription == "trial",
+        func.date(TestPeriod.expiry_date) >= today,
+    ).correlate(User)
+    wireguard = paid.where(Subscribers.protocol.in_(("wireguard", "both"))).exists() | trial.where(
+        TestPeriod.protocol.in_(("wireguard", "both"))
+    ).exists()
+    xui = paid.where(Subscribers.protocol.in_(("xui", "both"))).exists() | trial.where(
+        TestPeriod.protocol.in_(("xui", "both"))
+    ).exists()
+    statement = update(User).values(protocol=case(
+        (wireguard & xui, "both"), (wireguard, "wireguard"), (xui, "xui"), else_=None,
+    ))
+    if tg_id is not None:
+        statement = statement.where(User.tg_id == tg_id)
+    await session.execute(statement.execution_options(synchronize_session=False))
 
 
 async def async_main():
@@ -174,6 +181,8 @@ async def async_main():
             await conn.run_sync(Base.metadata.create_all)
             await _run_lightweight_migrations(conn)
             table_names = await conn.run_sync(lambda sync_conn: inspect(sync_conn).get_table_names())
+        async with async_session.begin() as session:
+            await refresh_user_protocol(session)
         logger.info(
             "Database initialization completed: %s tables ensured (%s).",
             len(table_names),

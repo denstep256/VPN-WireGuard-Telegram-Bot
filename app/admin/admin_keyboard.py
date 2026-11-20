@@ -25,7 +25,6 @@ admin_panel = ReplyKeyboardMarkup(
             KeyboardButton(text=BUTTON_TEXTS["statistics"])
         ],
         [
-            KeyboardButton(text=BUTTON_TEXTS["add_server"]),
             KeyboardButton(text=BUTTON_TEXTS["add_promocode"])
         ],
         [

@@ -85,47 +85,34 @@ def calc_bonus_to_use(price_after_discount: int, user_bonus_balance: int) -> int
     return max(0, min(int(user_bonus_balance or 0), max_bonus_allowed))
 
 
-def build_buy_payload(
-    base_plan: str,
-    region: str,
-    region_id: int,
-    discount: int,
-    bonus_used: int,
-    protocol: str = "wireguard",
-) -> str:
-    return f"{base_plan}|{protocol}|{region}|{region_id}|d{discount}|b{bonus_used}"
+def build_buy_payload(plan: str, discount: int, bonus_used: int) -> str:
+    return f"{plan}|d{discount}|b{bonus_used}"
 
 
-def parse_buy_payload(payload: str) -> tuple[str, str, str, int, int, int]:
-    parts = (payload or "").split("|")
-    if len(parts) < 3:
-        raise ValueError("Invalid payload")
+def parse_buy_payload(payload: str) -> tuple[str, str, int, int]:
+    parts = payload.split("|")
+    plan = parts[0]
+    if plan not in PLAN_PRICES:
+        raise ValueError("Unknown plan")
 
-    base_plan = parts[0]
-    if len(parts) >= 4 and parts[1] in {"wireguard", "xui"}:
-        protocol = parts[1]
-        region = parts[2]
-        region_id_index = 3
-        flags_start = 4
-    else:
+    flags = parts[1:]
+    protocol = "both"
+    if flags and flags[0] in {"wireguard", "xui"}:
+        # Invoices already sent by the old bot retain their original entitlement.
+        protocol = flags[0]
+        flags = flags[3:]
+    elif flags and not flags[0].startswith("d"):
         protocol = "wireguard"
-        region = parts[1]
-        region_id_index = 2
-        flags_start = 3
-
-    if not parts[region_id_index].isdigit():
-        raise ValueError("Invalid region id")
-    region_id = int(parts[region_id_index])
+        flags = flags[2:]
 
     discount = 0
     bonus_used = 0
-    for part in parts[flags_start:]:
+    for part in flags:
         if part.startswith("d") and part[1:].isdigit():
             discount = int(part[1:])
         elif part.startswith("b") and part[1:].isdigit():
             bonus_used = int(part[1:])
-
-    return base_plan, protocol, region, region_id, discount, bonus_used
+    return plan, protocol, discount, bonus_used
 
 
 def build_renew_payload(plan: str, sub_id: int, discount: int, bonus_used: int) -> str:

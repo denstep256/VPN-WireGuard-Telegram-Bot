@@ -1,17 +1,15 @@
 import json
-import logging
 from datetime import datetime
 
-from aiogram.types import Message, FSInputFile, CallbackQuery, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
-from sqlalchemy import select
 from aiogram import Router, F
 
 import app.users.keyboard as kb
-import app.admin.admin_keyboard as admin_kb
 import app.database.requests as rq
-from app.database.models import TestPeriod, Subscribers, async_session, Server
+import config
+from app.addons.button_text import BUTTON_TEXTS
 from config import ADMIN_ID
 
 router = Router()
@@ -66,30 +64,13 @@ async def help_main_button(message: Message, state: FSMContext):
     else:
         await message.answer('Вы вернулись в главное меню', reply_markup=kb.get_main_keyboard(message.from_user.id))
 
-@router.message(F.text == 'Как подключить ⚙️')
-async def help_main_button(message: Message):
-    await message.answer(texts_for_bot["how_to_connect"], reply_markup=kb.how_to_connect_kb)
-
-
-@router.message(F.text == 'iPhone 📱')
-async def help_main_button(message: Message):
-    await message.answer(texts_for_bot['iphone_message'], reply_markup=kb.iphone_kb)
-    await message.answer(texts_for_bot["download_btn"], reply_markup=kb.accept_kb)
-
-@router.message(F.text == 'Android 📱')
-async def help_main_button(message: Message):
-    await message.answer(texts_for_bot['android_message'], reply_markup=kb.android_kb)
-    await message.answer(texts_for_bot["download_btn"], reply_markup=kb.accept_kb)
-
-@router.message(F.text == 'Скачал✅')
-async def help_main_button(message: Message):
-
-    await message.answer(
-        texts_for_bot['download_message'],
-        reply_markup=kb.download_kb
-    )
-    # Отдельное сообщение с основной клавиатурой
-    await message.answer(
-        "Вы вернулись в главное меню",
-        reply_markup=kb.get_main_keyboard(message.from_user.id)
-    )
+@router.message(F.text == BUTTON_TEXTS["how_connect"])
+async def send_connection_instructions(message: Message):
+    if config.VPN_INSTRUCTION_URL:
+        text = config.VPN_INSTRUCTION_URL
+    else:
+        text = (
+            f"Инструкция для iPhone\n{config.VPN_INSTRUCTION_IOS_URL}\n\n"
+            f"Инструкция для Android\n{config.VPN_INSTRUCTION_ANDROID_URL}"
+        )
+    await message.answer(text, reply_markup=kb.get_main_keyboard(message.from_user.id), disable_web_page_preview=True)
