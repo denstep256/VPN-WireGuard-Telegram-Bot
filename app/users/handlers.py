@@ -1,5 +1,6 @@
 import json
 from datetime import datetime
+from html import escape
 
 from aiogram.types import Message
 from aiogram.filters import CommandStart
@@ -66,11 +67,19 @@ async def help_main_button(message: Message, state: FSMContext):
 
 @router.message(F.text == BUTTON_TEXTS["how_connect"])
 async def send_connection_instructions(message: Message):
-    if config.VPN_INSTRUCTION_URL:
-        text = config.VPN_INSTRUCTION_URL
-    else:
-        text = (
-            f"Инструкция для iPhone\n{config.VPN_INSTRUCTION_IOS_URL}\n\n"
-            f"Инструкция для Android\n{config.VPN_INSTRUCTION_ANDROID_URL}"
-        )
-    await message.answer(text, reply_markup=kb.get_main_keyboard(message.from_user.id), disable_web_page_preview=True)
+    instructions = (
+        ("VLESS", config.VPN_INSTRUCTION_VLESS),
+        ("WireGuard для iPhone", config.VPN_INSTRUCTION_IOS_URL),
+        ("WireGuard для Android", config.VPN_INSTRUCTION_ANDROID_URL),
+    )
+    text = "\n".join([
+        "Чтобы настроить VPN, откройте инструкцию для вашего подключения.",
+        "",
+        *(f'<a href="{escape(url)}">{label}</a>' for label, url in instructions),
+    ])
+    await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=kb.get_main_keyboard(message.from_user.id),
+        disable_web_page_preview=True,
+    )

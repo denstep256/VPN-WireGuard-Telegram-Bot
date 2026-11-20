@@ -63,7 +63,7 @@ XUI_CLIENT_LIMIT_IP = 2
 XUI_TRAFFIC_RESET_DAY = 1
 VPN_TIMEZONE = "Europe/Moscow"
 
-VPN_INSTRUCTION_URL = ""  # Если есть одна инструкция для всех устройств.
+VPN_INSTRUCTION_VLESS = "https://teletype.in/@zenithvpn/editor/vless"
 VPN_INSTRUCTION_IOS_URL = "https://teletype.in/@zenithvpn/ogi7tHwL4qV"
 VPN_INSTRUCTION_ANDROID_URL = "https://teletype.in/@zenithvpn/N1lyKcbCMeV"
 ```
